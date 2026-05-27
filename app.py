@@ -138,7 +138,10 @@ FIELD_LABELS = {
 # ── Load benchmarks from Google Sheets ────────────────────────────────────────
 @st.cache_data(ttl=60)  # cache for 60 seconds — edits in Google Sheets appear within 1 minute
 def load_benchmarks():
-    """Read from Google Sheets and return a dict keyed by (building_type, city, zone)."""
+    """Read from Google Sheets — keyed by (building_type, city, zone, subtype).
+    Subtype allows multiple benchmarks for the same building type + city
+    e.g. School · Edmonton · Zone 7 · Boiler+VAV  vs  School · Edmonton · Zone 7 · Heat Pump+DOAS
+    """
     try:
         df = pd.read_csv(SHEET_URL, dtype=str)
     except Exception as e:
@@ -148,12 +151,14 @@ def load_benchmarks():
     benchmarks = {}
     for _, row in df.iterrows():
         try:
-            btype = str(row["Building Type"]).strip()
-            city  = str(row["City"]).strip()
-            zone  = str(row["Climate Zone"]).strip()
+            btype   = str(row["Building Type"]).strip()
+            city    = str(row["City"]).strip()
+            zone    = str(row["Climate Zone"]).strip()
+            # Subtype is optional — falls back to "General" if column missing or empty
+            subtype = str(row.get("Subtype", "") or "").strip() or "General"
             pct_raw = str(row["Percentile Data (comma separated)"]).strip()
             pct_data = [float(x.strip()) for x in pct_raw.split(",") if x.strip()]
-            benchmarks[(btype, city, zone)] = {
+            benchmarks[(btype, city, zone, subtype)] = {
                 "good_eui":    float(row["Good EUI"]),
                 "median_eui":  float(row["Median EUI"]),
                 "high_eui":    float(row["High Flag EUI"]),
@@ -166,6 +171,7 @@ def load_benchmarks():
                 "recept_pct":  float(row["Receptacle %"]),
                 "pumps_pct":   float(row["Pumps %"]),
                 "pct_data":    pct_data,
+                "subtype":     subtype,
             }
         except Exception:
             continue
@@ -300,6 +306,7 @@ BENCHMARKS = load_benchmarks()
 ALL_BUILDING_TYPES = sorted(set(k[0] for k in BENCHMARKS)) or ["School","Office","Retail","Hospital","Residential","Warehouse"]
 CITIES             = sorted(set(k[1] for k in BENCHMARKS)) or ["Edmonton","Calgary","Vancouver","Toronto"]
 CLIMATE_ZONES      = sorted(set(k[2] for k in BENCHMARKS)) or ["4","5","6","7","8"]
+# Subtypes derived dynamically per selection in Step 3
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -344,9 +351,10 @@ if st.session_state.page == "⚙️ Manage Benchmarks":
             load_benchmarks.clear()
             st.rerun()
         rows = []
-        for (btype, city, zone), bm in BENCHMARKS.items():
+        for (btype, city, zone, subtype), bm in BENCHMARKS.items():
             rows.append({
                 "Building Type": btype, "City": city, "Zone": zone,
+                "Subtype": subtype,
                 "Good EUI": bm["good_eui"], "Median EUI": bm["median_eui"],
                 "High Flag": bm["high_eui"], "GHGI": bm["median_ghgi"],
                 "Heating %": bm["heat_pct"], "Cooling %": bm["cool_pct"],
@@ -402,12 +410,13 @@ elif st.session_state.page == "📚 Benchmark Explorer":
     matches = {k:v for k,v in BENCHMARKS.items() if k[0]==bx_type and (bx_city=="All cities" or k[1]==bx_city) and k[2]==bx_zone}
 
     if not matches:
-        st.warning(f"No benchmark data found for **{bx_type}** in **{bx_city}** (Zone {bx_zone}). Try a different combination, or add this benchmark in ⚙️ Manage Benchmarks.")
+        st.warning(f"No benchmark data found for **{bx_type}** in **{bx_city}** (Zone {bx_zone}). Try a different combination, or add a new row in your Google Sheet.")
 
         st.stop()
 
-    for (btype, bcity, bzone), bm in matches.items():
-        st.markdown(f"## 🏢 {btype} · {bcity} · Climate Zone {bzone}")
+    for (btype, bcity, bzone, bsubtype), bm in matches.items():
+        subtype_tag = f" · {bsubtype}" if bsubtype != "General" else ""
+        st.markdown(f"## 🏢 {btype} · {bcity} · Climate Zone {bzone}{subtype_tag}")
         ci1,ci2 = st.columns(2)
         ci1.markdown(f'<div class="bm-card"><div class="bm-label">Median GHGI</div><div class="bm-value">{bm["median_ghgi"]}</div><div class="bm-sub">kgCO₂e/m²·yr</div></div>', unsafe_allow_html=True)
         ci2.markdown(f'<div class="bm-card"><div class="bm-label">Total Benchmark Records</div><div class="bm-value" style="font-size:15px">{len(BENCHMARKS)}</div><div class="bm-sub">in database</div></div>', unsafe_allow_html=True)
@@ -427,7 +436,8 @@ elif st.session_state.page == "📚 Benchmark Explorer":
         with cp1:
             pie_l = [l for l,v in zip(eu_labels,med_vals) if v>0]
             pie_v = [v for v in med_vals if v>0]
-            st.plotly_chart(make_pie(pie_l, pie_v, f"Median End-Use Split — {btype} · {bcity}"), use_container_width=True)
+            subtype_label = f" ({bsubtype})" if bsubtype != "General" else ""
+            st.plotly_chart(make_pie(pie_l, pie_v, f"Median End-Use Split — {btype} · {bcity}{subtype_label}"), use_container_width=True)
         with cp2:
             fig_bar = go.Figure()
             fig_bar.add_trace(go.Bar(name="Good Practice", x=eu_labels, y=good_vals, marker_color="#16a34a", opacity=0.85))
@@ -560,6 +570,23 @@ else:
             model_type    = st.selectbox("Model Type", MODEL_TYPES)
             phase         = st.selectbox("Project Phase", PROJECT_PHASES, index=3)
             area_override = st.number_input("Floor Area Override (m²) — 0 = use mapped value", min_value=0.0, step=100.0, format="%.0f")
+
+        # Subtype selector — dynamically shows only subtypes available for chosen building+city+zone
+        available_subtypes = sorted(set(
+            k[3] for k in BENCHMARKS
+            if k[0]==building_type and k[1]==city and k[2]==climate_zone
+        ))
+        if len(available_subtypes) > 1:
+            st.markdown("**Multiple benchmarks available for this building type and city — select the one that best matches your project:**")
+            subtype = st.selectbox("Benchmark Subtype", available_subtypes)
+        elif len(available_subtypes) == 1:
+            subtype = available_subtypes[0]
+            if subtype != "General":
+                st.info(f"ℹ️ Using benchmark subtype: **{subtype}**")
+        else:
+            subtype = "General"
+            st.warning("No benchmark found for this combination. KPIs will be calculated but no comparison will be shown.")
+
         cb,cn = st.columns([1,4])
         with cb:
             if st.button("← Back"):
@@ -567,14 +594,14 @@ else:
         with cn:
             if st.button("Calculate KPIs & View Results →", type="primary"):
                 kpis   = calculate_kpis(st.session_state.vals, area_override if area_override>0 else None)
-                bm_key = (building_type, city, climate_zone)
+                bm_key = (building_type, city, climate_zone, subtype)
                 bm     = BENCHMARKS.get(bm_key)
                 flags  = generate_flags(kpis, bm, building_type)
                 pct    = calc_percentile(kpis["total_eui"], bm["pct_data"]) if bm else None
                 st.session_state.results = {"kpis":kpis,"bm":bm,"flags":flags,"percentile":pct,
                     "meta":{"project_name":project_name,"building_type":building_type,"city":city,
-                            "climate_zone":climate_zone,"software":software,"model_type":model_type,
-                            "phase":phase,"date":str(date.today())}}
+                            "climate_zone":climate_zone,"subtype":subtype,"software":software,
+                            "model_type":model_type,"phase":phase,"date":str(date.today())}}
                 st.session_state.step=4; st.rerun()
 
     elif st.session_state.step == 4 and st.session_state.results:
@@ -590,8 +617,9 @@ else:
         proj_name     = meta["project_name"] or "Project Results"
         pct_text      = f"&nbsp;&nbsp;|&nbsp;&nbsp; Benchmark percentile: <b>{pct}th</b> (lower = better)" if pct else ""
         flag_text     = f"Pass: {fc['pass']}  &nbsp; Review: {fc['warn']}  &nbsp; Fail: {fc['fail']}"
+        subtype_disp  = f" &middot; {meta.get('subtype','')}" if meta.get('subtype','') not in ("","General") else ""
         info_line     = (f"{meta['building_type']} &middot; {meta['city']} &middot; "
-                         f"Climate Zone {meta['climate_zone']} &middot; {meta['model_type']} "
+                         f"Climate Zone {meta['climate_zone']}{subtype_disp} &middot; {meta['model_type']} "
                          f"&middot; {meta['phase']} &middot; {meta['software']}")
         banner_html = (
             f'<div style="background:{overall_color};border-left:5px solid {overall_border};'
