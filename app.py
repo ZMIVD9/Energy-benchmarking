@@ -158,10 +158,11 @@ def load_benchmarks():
             subtype = str(row.get("Subtype", "") or "").strip() or "General"
             pct_raw = str(row["Percentile Data (comma separated)"]).strip()
             pct_data = [float(x.strip()) for x in pct_raw.split(",") if x.strip()]
+            median = float(row["Median EUI"])
             benchmarks[(btype, city, zone, subtype)] = {
-                "good_eui":    float(row["Good EUI"]),
-                "median_eui":  float(row["Median EUI"]),
-                "high_eui":    float(row["High Flag EUI"]),
+                "median_eui":  median,
+                "good_eui":    round(median * 0.85, 1),   # −15% of median
+                "high_eui":    round(median * 1.15, 1),   # +15% of median
                 "median_ghgi": float(row["Median GHGI"]),
                 "heat_pct":    float(row["Heating %"]),
                 "cool_pct":    float(row["Cooling %"]),
@@ -181,6 +182,73 @@ def reload_benchmarks():
     """Clear cache and reload from Google Sheets."""
     load_benchmarks.clear()
     st.rerun()
+
+def append_to_google_sheet(sheet_name: str, row: list):
+    """
+    Append a row to a Google Sheet using the Sheets API via requests.
+    Requires SHEET_ID and GOOGLE_SERVICE_ACCOUNT in st.secrets.
+    Falls back gracefully if credentials are not configured.
+    """
+    try:
+        import json, requests
+        creds_raw = st.secrets.get("GOOGLE_SERVICE_ACCOUNT", None)
+        if not creds_raw:
+            return False, "No Google service account configured in secrets."
+
+        creds = json.loads(creds_raw) if isinstance(creds_raw, str) else dict(creds_raw)
+
+        # Get OAuth2 token using service account
+        import time, base64, hashlib
+        from urllib.parse import urlencode
+
+        # Build JWT
+        header = base64.urlsafe_b64encode(
+            json.dumps({"alg":"RS256","typ":"JWT"}).encode()
+        ).rstrip(b"=").decode()
+
+        now = int(time.time())
+        claim = base64.urlsafe_b64encode(json.dumps({
+            "iss": creds["client_email"],
+            "scope": "https://www.googleapis.com/auth/spreadsheets",
+            "aud": "https://oauth2.googleapis.com/token",
+            "iat": now, "exp": now + 3600
+        }).encode()).rstrip(b"=").decode()
+
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding
+
+        private_key = serialization.load_pem_private_key(
+            creds["private_key"].encode(), password=None
+        )
+        sig_input = f"{header}.{claim}".encode()
+        signature = base64.urlsafe_b64encode(
+            private_key.sign(sig_input, padding.PKCS1v15(), hashes.SHA256())
+        ).rstrip(b"=").decode()
+
+        jwt = f"{header}.{claim}.{signature}"
+
+        token_resp = requests.post("https://oauth2.googleapis.com/token", data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            "assertion": jwt,
+        })
+        access_token = token_resp.json().get("access_token")
+        if not access_token:
+            return False, f"Could not get access token: {token_resp.text}"
+
+        # Append row to sheet
+        url = (f"https://sheets.googleapis.com/v4/spreadsheets/{SHEET_ID}"
+               f"/values/{sheet_name}!A1:append?valueInputOption=USER_ENTERED"
+               f"&insertDataOption=INSERT_ROWS")
+        resp = requests.post(url,
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"values": [row]}
+        )
+        if resp.status_code == 200:
+            return True, "Success"
+        else:
+            return False, f"Sheets API error: {resp.text}"
+    except Exception as e:
+        return False, str(e)
 
 # ── Helper functions ───────────────────────────────────────────────────────────
 def guess_mapping(headers):
@@ -239,38 +307,88 @@ def generate_flags(kpis, bm, building_type):
     if not bm:
         flags.append(("info","ℹ️","No benchmark found for this combination. KPIs calculated but no comparison available."))
         return flags
-    fan_bm  = bm["median_eui"] * bm["fan_pct"]  / 100
-    heat_bm = bm["median_eui"] * bm["heat_pct"] / 100
-    cool_bm = bm["median_eui"] * bm["cool_pct"] / 100
-    ltg_bm  = bm["median_eui"] * bm["ltg_pct"]  / 100
-    if kpis["total_eui"] > bm["high_eui"]:
-        flags.append(("fail","✗",f"Total EUI ({kpis['total_eui']} kWh/m²·yr) exceeds the high flag threshold of {bm['high_eui']} kWh/m²·yr — review all model inputs and fuel assignments."))
-    elif kpis["total_eui"] < bm["good_eui"] * 0.55:
-        flags.append(("warn","⚠",f"Total EUI ({kpis['total_eui']} kWh/m²·yr) is unusually low — confirm all end-uses are modelled."))
+    # All thresholds use ±15% of median EUI
+    med       = bm["median_eui"]
+    good      = bm["good_eui"]    # median * 0.85
+    high      = bm["high_eui"]    # median * 1.15
+
+    def end_med(pct): return med * pct / 100
+    def end_good(pct): return end_med(pct) * 0.85
+    def end_high(pct): return end_med(pct) * 1.15
+
+    fan_med  = end_med(bm["fan_pct"])
+    heat_med = end_med(bm["heat_pct"])
+    cool_med = end_med(bm["cool_pct"])
+    ltg_med  = end_med(bm["ltg_pct"])
+
+    # Total EUI
+    if kpis["total_eui"] > high:
+        flags.append(("fail","✗",
+            f"Total EUI ({kpis['total_eui']} kWh/m²·yr) is more than 15% above the benchmark median "
+            f"({med} kWh/m²·yr). High flag threshold: {high} kWh/m²·yr."))
+    elif kpis["total_eui"] < good * 0.6:
+        flags.append(("warn","⚠",
+            f"Total EUI ({kpis['total_eui']} kWh/m²·yr) is unusually low — confirm all end-uses are modelled."))
+    elif kpis["total_eui"] <= good:
+        flags.append(("pass","✓",
+            f"Total EUI ({kpis['total_eui']} kWh/m²·yr) is below the benchmark median ({med} kWh/m²·yr) — good performance."))
     else:
-        flags.append(("pass","✓",f"Total EUI ({kpis['total_eui']} kWh/m²·yr) is within expected range (Good: {bm['good_eui']}, Median: {bm['median_eui']} kWh/m²·yr)."))
-    if fan_bm > 0 and kpis["fan_eui"] > fan_bm * 1.35:
-        flags.append(("warn","⚠",f"Fan energy ({kpis['fan_eui']} kWh/m²·yr) is {round((kpis['fan_eui']/fan_bm-1)*100)}% above benchmark — verify AHU schedules and fan sizing."))
+        flags.append(("pass","✓",
+            f"Total EUI ({kpis['total_eui']} kWh/m²·yr) is within ±15% of the benchmark median ({med} kWh/m²·yr)."))
+
+    # Fan energy
+    if fan_med > 0 and kpis["fan_eui"] > end_high(bm["fan_pct"]):
+        flags.append(("fail","✗",
+            f"Fan energy ({kpis['fan_eui']} kWh/m²·yr) is more than 15% above benchmark median "
+            f"({round(fan_med,1)} kWh/m²·yr) — verify AHU schedules and fan sizing."))
     elif kpis["fan_eui"] == 0:
-        flags.append(("warn","⚠","Fan energy is zero — confirm fan systems are included."))
+        flags.append(("warn","⚠","Fan energy is zero — confirm fan systems are included in the model."))
+    else:
+        flags.append(("pass","✓",f"Fan energy ({kpis['fan_eui']} kWh/m²·yr) is within expected range."))
+
+    # Cooling
     if kpis["cool_eui"] == 0:
         flags.append(("warn","⚠","No cooling energy — confirm whether a mechanical cooling system exists."))
-    elif cool_bm > 0 and kpis["cool_eui"] < cool_bm * 0.25:
-        flags.append(("warn","⚠",f"Cooling energy ({kpis['cool_eui']} kWh/m²·yr) is very low — verify cooling system modelling."))
-    if heat_bm > 0 and kpis["heat_eui"] > heat_bm * 1.5:
-        flags.append(("warn","⚠",f"Heating energy ({kpis['heat_eui']} kWh/m²·yr) is {round((kpis['heat_eui']/heat_bm-1)*100)}% above benchmark — review envelope and heating schedules."))
-    if heat_bm > 0 and cool_bm > 0 and kpis["heat_eui"] > heat_bm * 1.2 and kpis["cool_eui"] > cool_bm * 1.2:
-        flags.append(("warn","⚠","Both heating and cooling elevated — possible simultaneous heating/cooling or control issue."))
+    elif kpis["cool_eui"] < cool_med * 0.25:
+        flags.append(("warn","⚠",
+            f"Cooling energy ({kpis['cool_eui']} kWh/m²·yr) is very low compared to benchmark — verify cooling system modelling."))
+    elif kpis["cool_eui"] > end_high(bm["cool_pct"]):
+        flags.append(("fail","✗",
+            f"Cooling energy ({kpis['cool_eui']} kWh/m²·yr) is more than 15% above benchmark median "
+            f"({round(cool_med,1)} kWh/m²·yr)."))
+
+    # Heating
+    if heat_med > 0 and kpis["heat_eui"] > end_high(bm["heat_pct"]):
+        flags.append(("fail","✗",
+            f"Heating energy ({kpis['heat_eui']} kWh/m²·yr) is more than 15% above benchmark median "
+            f"({round(heat_med,1)} kWh/m²·yr) — review envelope and heating schedules."))
+    elif heat_med > 0 and kpis["heat_eui"] <= end_high(bm["heat_pct"]):
+        flags.append(("pass","✓",f"Heating energy ({kpis['heat_eui']} kWh/m²·yr) is within expected range."))
+
+    # Simultaneous heating + cooling
+    if kpis["heat_eui"] > end_high(bm["heat_pct"]) and kpis["cool_eui"] > end_high(bm["cool_pct"]):
+        flags.append(("warn","⚠","Both heating and cooling are above the high threshold — possible simultaneous heating/cooling or control issue."))
+
+    # DHW
     if building_type in DHW_BUILDINGS and kpis["dhw_eui"] == 0:
         flags.append(("fail","✗",f"DHW energy is zero for a {building_type} — domestic hot water is typically required."))
     elif kpis["dhw_eui"] > 0:
         flags.append(("pass","✓",f"DHW energy present ({kpis['dhw_eui']} kWh/m²·yr)."))
-    if ltg_bm > 0 and kpis["ltg_eui"] > ltg_bm * 1.4:
-        flags.append(("warn","⚠",f"Lighting energy ({kpis['ltg_eui']} kWh/m²·yr) above benchmark ({round(ltg_bm,1)}) — verify LPD vs NECB."))
-    if kpis["ghgi"] > bm["median_ghgi"] * 1.3:
-        flags.append(("warn","⚠",f"GHGI ({kpis['ghgi']} kgCO₂e/m²·yr) above median benchmark ({bm['median_ghgi']}) — review fuel mix."))
+
+    # Lighting
+    if ltg_med > 0 and kpis["ltg_eui"] > end_high(bm["ltg_pct"]):
+        flags.append(("fail","✗",
+            f"Lighting energy ({kpis['ltg_eui']} kWh/m²·yr) is more than 15% above benchmark median "
+            f"({round(ltg_med,1)} kWh/m²·yr) — verify LPD values against NECB."))
+
+    # GHGI
+    if kpis["ghgi"] > bm["median_ghgi"] * 1.15:
+        flags.append(("fail","✗",
+            f"GHGI ({kpis['ghgi']} kgCO₂e/m²·yr) is more than 15% above benchmark median "
+            f"({bm['median_ghgi']} kgCO₂e/m²·yr) — review fuel mix and emission factors."))
     else:
-        flags.append(("pass","✓",f"GHGI ({kpis['ghgi']} kgCO₂e/m²·yr) within acceptable range (benchmark median: {bm['median_ghgi']})."))
+        flags.append(("pass","✓",
+            f"GHGI ({kpis['ghgi']} kgCO₂e/m²·yr) is within acceptable range (benchmark median: {bm['median_ghgi']})."))
     return flags
 
 def status_color(val, good, median, high):
@@ -355,8 +473,10 @@ if st.session_state.page == "⚙️ Manage Benchmarks":
             rows.append({
                 "Building Type": btype, "City": city, "Zone": zone,
                 "Subtype": subtype,
-                "Good EUI": bm["good_eui"], "Median EUI": bm["median_eui"],
-                "High Flag": bm["high_eui"], "GHGI": bm["median_ghgi"],
+                "Median EUI": bm["median_eui"],
+                "Good (−15%)": bm["good_eui"],
+                "High Flag (+15%)": bm["high_eui"],
+                "GHGI": bm["median_ghgi"],
                 "Heating %": bm["heat_pct"], "Cooling %": bm["cool_pct"],
                 "Fan %": bm["fan_pct"], "Lighting %": bm["ltg_pct"],
                 "DHW %": bm["dhw_pct"], "Receptacle %": bm["recept_pct"],
@@ -421,10 +541,13 @@ elif st.session_state.page == "📚 Benchmark Explorer":
         ci1.markdown(f'<div class="bm-card"><div class="bm-label">Median GHGI</div><div class="bm-value">{bm["median_ghgi"]}</div><div class="bm-sub">kgCO₂e/m²·yr</div></div>', unsafe_allow_html=True)
         ci2.markdown(f'<div class="bm-card"><div class="bm-label">Total Benchmark Records</div><div class="bm-value" style="font-size:15px">{len(BENCHMARKS)}</div><div class="bm-sub">in database</div></div>', unsafe_allow_html=True)
 
-        m1,m2,m3 = st.columns(3)
-        m1.metric("🟢 Good Practice EUI", f"{bm['good_eui']} kWh/m²·yr")
-        m2.metric("🟡 Median EUI",        f"{bm['median_eui']} kWh/m²·yr")
-        m3.metric("🔴 High Flag EUI",     f"{bm['high_eui']} kWh/m²·yr")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("📊 Median EUI",          f"{bm['median_eui']} kWh/m²·yr",
+                  help="Typical performance for this building type and location.")
+        m2.metric("🟢 Good Practice (−15%)", f"{bm['good_eui']} kWh/m²·yr",
+                  help="15% below median — used as the pass threshold in QA/QC.")
+        m3.metric("🔴 High Flag (+15%)",     f"{bm['high_eui']} kWh/m²·yr",
+                  help="15% above median — used as the fail threshold in QA/QC.")
 
         eu_labels = ["Heating","Cooling","Fans","Lighting","DHW","Receptacle","Pumps"]
         eu_pcts   = [bm["heat_pct"],bm["cool_pct"],bm["fan_pct"],bm["ltg_pct"],bm["dhw_pct"],bm["recept_pct"],bm["pumps_pct"]]
@@ -440,18 +563,25 @@ elif st.session_state.page == "📚 Benchmark Explorer":
             st.plotly_chart(make_pie(pie_l, pie_v, f"Median End-Use Split — {btype} · {bcity}{subtype_label}"), use_container_width=True)
         with cp2:
             fig_bar = go.Figure()
-            fig_bar.add_trace(go.Bar(name="Good Practice", x=eu_labels, y=good_vals, marker_color="#16a34a", opacity=0.85))
-            fig_bar.add_trace(go.Bar(name="Median",        x=eu_labels, y=med_vals,  marker_color="#d97706", opacity=0.85))
-            fig_bar.add_trace(go.Bar(name="High Flag",     x=eu_labels, y=high_vals, marker_color="#dc2626", opacity=0.85))
-            fig_bar.update_layout(barmode="group", template="plotly_white", height=320,
-                                  title=dict(text="End-Use EUI by Performance Tier", font=dict(size=13,color="#0f4c81")),
-                                  yaxis_title="EUI (kWh/m²·yr)", legend=dict(orientation="h",y=-0.25), margin=dict(t=40,b=10))
+            fig_bar.add_trace(go.Bar(name="Median EUI", x=eu_labels, y=med_vals, marker_color="#0f4c81", opacity=0.85))
+            # Add ±15% error bars to show the good/high range
+            fig_bar.update_traces(error_y=dict(
+                type="data", symmetric=True,
+                array=[round(v*0.15,1) for v in med_vals],
+                color="#94a3b8", thickness=1.5, width=4,
+            ))
+            fig_bar.update_layout(template="plotly_white", height=320,
+                                  title=dict(text="End-Use Median EUI (bars show ±15% range)", font=dict(size=13,color="#0f4c81")),
+                                  yaxis_title="EUI (kWh/m²·yr)", showlegend=False, margin=dict(t=40,b=10))
             st.plotly_chart(fig_bar, use_container_width=True)
 
         st.markdown("#### End-Use Breakdown Table")
-        st.dataframe(pd.DataFrame({"End Use":eu_labels,"Share (%)":eu_pcts,
-            "Good Practice (kWh/m²·yr)":good_vals,"Median (kWh/m²·yr)":med_vals,"High Flag (kWh/m²·yr)":high_vals}),
-            use_container_width=True, hide_index=True)
+        st.caption("Good and High Flag are calculated as ±15% of median.")
+        st.dataframe(pd.DataFrame({
+            "End Use": eu_labels,
+            "Share (%)": eu_pcts,
+            "Median (kWh/m²·yr)": med_vals,
+        }), use_container_width=True, hide_index=True)
 
         st.markdown("#### Portfolio Percentile Distribution")
         sorted_pcts = sorted(bm["pct_data"])
@@ -642,7 +772,7 @@ else:
         # Row 1 — main totals
         r1c1,r1c2,r1c3,r1c4 = st.columns(4)
         with r1c1:
-            delta_eui = f"Benchmark median: {bm['median_eui']} kWh/m²·yr" if bm else "No benchmark"
+            delta_eui = f"Benchmark median: {bm['median_eui']} kWh/m²·yr (±15% = {bm['good_eui']}–{bm['high_eui']})" if bm else "No benchmark"
             color_eui = "#f0fdf4" if bm and kpis["total_eui"]<=bm["good_eui"] else "#fef2f2" if bm and kpis["total_eui"]>bm["high_eui"] else "#fffbeb"
             st.markdown(f'''<div style="background:{color_eui};border-radius:10px;padding:14px 16px;border:1px solid #e2e8f0">
                 <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Total EUI</div>
@@ -722,33 +852,88 @@ else:
             fan_split = bm["fan_pct"] / 3  # split benchmark fan % evenly across central/local/exhaust
             bm_good=[round(bm["good_eui"]*p/100,1)  for p in [bm["heat_pct"],bm["cool_pct"],fan_split,fan_split,fan_split,bm["ltg_pct"],bm["dhw_pct"],bm["recept_pct"],bm["pumps_pct"]]]
             bm_med =[round(bm["median_eui"]*p/100,1) for p in [bm["heat_pct"],bm["cool_pct"],fan_split,fan_split,fan_split,bm["ltg_pct"],bm["dhw_pct"],bm["recept_pct"],bm["pumps_pct"]]]
-            fig_cmp=go.Figure()
-            fig_cmp.add_trace(go.Bar(name="Your Model",    x=eu_l2,y=your_eu, marker_color="#0f4c81"))
-            fig_cmp.add_trace(go.Bar(name="Good Practice", x=eu_l2,y=bm_good, marker_color="#16a34a",opacity=0.75))
-            fig_cmp.add_trace(go.Bar(name="Median",        x=eu_l2,y=bm_med,  marker_color="#d97706",opacity=0.75))
-            fig_cmp.update_layout(barmode="group",template="plotly_white",height=320,
-                title=dict(text="Your End-Uses vs Benchmark",font=dict(size=13,color="#0f4c81")),
-                yaxis_title="EUI (kWh/m²·yr)",legend=dict(orientation="h",y=-0.25),margin=dict(t=40,b=10))
-            st.plotly_chart(fig_cmp,use_container_width=True)
+            fig_cmp = go.Figure()
+            # Benchmark median bars with ±15% error bars
+            fig_cmp.add_trace(go.Bar(
+                name="Benchmark Median", x=eu_l2, y=bm_med,
+                marker_color="#94a3b8", opacity=0.6,
+                error_y=dict(type="data", symmetric=True,
+                             array=[round(v*0.15,1) for v in bm_med],
+                             color="#64748b", thickness=1.5, width=5),
+            ))
+            # Your model bars
+            fig_cmp.add_trace(go.Bar(
+                name="Your Model", x=eu_l2, y=your_eu,
+                marker_color="#0f4c81",
+            ))
+            fig_cmp.update_layout(
+                barmode="group", template="plotly_white", height=320,
+                title=dict(text="Your Model vs Benchmark Median (error bars = ±15%)", font=dict(size=13,color="#0f4c81")),
+                yaxis_title="EUI (kWh/m²·yr)",
+                legend=dict(orientation="h", y=-0.25), margin=dict(t=40,b=10)
+            )
+            st.plotly_chart(fig_cmp, use_container_width=True)
 
         st.divider()
 
         # ── Section 3: Benchmark Table ──
         if bm:
-            st.markdown("### 📋 Detailed Benchmark Comparison")
-            st.caption("🟢 Good practice &nbsp; 🟡 Typical range &nbsp; 🟠 Above median &nbsp; 🔴 Above high flag")
+            st.markdown("### 📋 Benchmark Comparison")
+            st.caption("QA/QC thresholds: 🟢 ≤ −15% of median &nbsp; 🟡 Within ±15% of median &nbsp; 🔴 > +15% of median")
+
+            def bm_eui(pct): return round(bm["median_eui"] * pct / 100, 1)
+            def bm_status(val, pct):
+                med = bm["median_eui"] * pct / 100
+                return status_color(val, med*0.85, med, med*1.15)
+
             rows=[
-                {"Metric":"Total EUI (kWh/m²·yr)",     "Your Model":kpis["total_eui"],        "Good Practice":bm["good_eui"],                             "Median":bm["median_eui"],                             "High Flag":bm["high_eui"],                             "Status":status_color(kpis["total_eui"],bm["good_eui"],bm["median_eui"],bm["high_eui"])},
-                {"Metric":"Heating EUI (kWh/m²·yr)",   "Your Model":kpis["heat_eui"],         "Good Practice":round(bm["good_eui"]*bm["heat_pct"]/100),   "Median":round(bm["median_eui"]*bm["heat_pct"]/100),   "High Flag":round(bm["high_eui"]*bm["heat_pct"]/100),   "Status":status_color(kpis["heat_eui"],  round(bm["good_eui"]*bm["heat_pct"]/100),  round(bm["median_eui"]*bm["heat_pct"]/100),  round(bm["high_eui"]*bm["heat_pct"]/100))},
-                {"Metric":"Cooling EUI (kWh/m²·yr)",   "Your Model":kpis["cool_eui"],         "Good Practice":round(bm["good_eui"]*bm["cool_pct"]/100),   "Median":round(bm["median_eui"]*bm["cool_pct"]/100),   "High Flag":round(bm["high_eui"]*bm["cool_pct"]/100),   "Status":status_color(kpis["cool_eui"],  round(bm["good_eui"]*bm["cool_pct"]/100),  round(bm["median_eui"]*bm["cool_pct"]/100),  round(bm["high_eui"]*bm["cool_pct"]/100))},
-                {"Metric":"Fan EUI (kWh/m²·yr)",       "Your Model":kpis["fan_eui"],          "Good Practice":round(bm["good_eui"]*bm["fan_pct"]/100),    "Median":round(bm["median_eui"]*bm["fan_pct"]/100),    "High Flag":round(bm["high_eui"]*bm["fan_pct"]/100),    "Status":status_color(kpis["fan_eui"],   round(bm["good_eui"]*bm["fan_pct"]/100),   round(bm["median_eui"]*bm["fan_pct"]/100),   round(bm["high_eui"]*bm["fan_pct"]/100))},
-                {"Metric":"Lighting EUI (kWh/m²·yr)",  "Your Model":kpis["ltg_eui"],          "Good Practice":round(bm["good_eui"]*bm["ltg_pct"]/100),    "Median":round(bm["median_eui"]*bm["ltg_pct"]/100),    "High Flag":round(bm["high_eui"]*bm["ltg_pct"]/100),    "Status":status_color(kpis["ltg_eui"],   round(bm["good_eui"]*bm["ltg_pct"]/100),   round(bm["median_eui"]*bm["ltg_pct"]/100),   round(bm["high_eui"]*bm["ltg_pct"]/100))},
-                {"Metric":"DHW EUI (kWh/m²·yr)",       "Your Model":kpis["dhw_eui"],          "Good Practice":round(bm["good_eui"]*bm["dhw_pct"]/100),    "Median":round(bm["median_eui"]*bm["dhw_pct"]/100),    "High Flag":round(bm["high_eui"]*bm["dhw_pct"]/100),    "Status":status_color(kpis["dhw_eui"],   round(bm["good_eui"]*bm["dhw_pct"]/100),   round(bm["median_eui"]*bm["dhw_pct"]/100),   round(bm["high_eui"]*bm["dhw_pct"]/100))},
-                {"Metric":"Receptacle EUI (kWh/m²·yr)","Your Model":kpis.get("recept_eui",0), "Good Practice":round(bm["good_eui"]*bm["recept_pct"]/100), "Median":round(bm["median_eui"]*bm["recept_pct"]/100), "High Flag":round(bm["high_eui"]*bm["recept_pct"]/100), "Status":status_color(kpis.get("recept_eui",0),round(bm["good_eui"]*bm["recept_pct"]/100),round(bm["median_eui"]*bm["recept_pct"]/100),round(bm["high_eui"]*bm["recept_pct"]/100))},
-                {"Metric":"Pumps EUI (kWh/m²·yr)",     "Your Model":kpis["pumps_eui"],        "Good Practice":round(bm["good_eui"]*bm["pumps_pct"]/100),  "Median":round(bm["median_eui"]*bm["pumps_pct"]/100),  "High Flag":round(bm["high_eui"]*bm["pumps_pct"]/100),  "Status":status_color(kpis["pumps_eui"], round(bm["good_eui"]*bm["pumps_pct"]/100),  round(bm["median_eui"]*bm["pumps_pct"]/100),  round(bm["high_eui"]*bm["pumps_pct"]/100))},
-                {"Metric":"GHGI (kgCO₂e/m²·yr)",       "Your Model":kpis["ghgi"],             "Good Practice":round(bm["median_ghgi"]*0.75),               "Median":bm["median_ghgi"],                            "High Flag":round(bm["median_ghgi"]*1.5),               "Status":status_color(kpis["ghgi"],round(bm["median_ghgi"]*0.75),bm["median_ghgi"],round(bm["median_ghgi"]*1.5))},
+                {"End Use":           "Total EUI (kWh/m²·yr)",
+                 "Your Model":        kpis["total_eui"],
+                 "Benchmark Median":  bm["median_eui"],
+                 "Difference":        f"{round(kpis['total_eui'] - bm['median_eui'], 1):+}",
+                 "QA Status":         status_color(kpis["total_eui"], bm["good_eui"], bm["median_eui"], bm["high_eui"])},
+                {"End Use":           "Heating EUI (kWh/m²·yr)",
+                 "Your Model":        kpis["heat_eui"],
+                 "Benchmark Median":  bm_eui(bm["heat_pct"]),
+                 "Difference":        f"{round(kpis['heat_eui'] - bm_eui(bm['heat_pct']), 1):+}",
+                 "QA Status":         bm_status(kpis["heat_eui"], bm["heat_pct"])},
+                {"End Use":           "Cooling EUI (kWh/m²·yr)",
+                 "Your Model":        kpis["cool_eui"],
+                 "Benchmark Median":  bm_eui(bm["cool_pct"]),
+                 "Difference":        f"{round(kpis['cool_eui'] - bm_eui(bm['cool_pct']), 1):+}",
+                 "QA Status":         bm_status(kpis["cool_eui"], bm["cool_pct"])},
+                {"End Use":           "Fan EUI (kWh/m²·yr)",
+                 "Your Model":        kpis["fan_eui"],
+                 "Benchmark Median":  bm_eui(bm["fan_pct"]),
+                 "Difference":        f"{round(kpis['fan_eui'] - bm_eui(bm['fan_pct']), 1):+}",
+                 "QA Status":         bm_status(kpis["fan_eui"], bm["fan_pct"])},
+                {"End Use":           "Lighting EUI (kWh/m²·yr)",
+                 "Your Model":        kpis["ltg_eui"],
+                 "Benchmark Median":  bm_eui(bm["ltg_pct"]),
+                 "Difference":        f"{round(kpis['ltg_eui'] - bm_eui(bm['ltg_pct']), 1):+}",
+                 "QA Status":         bm_status(kpis["ltg_eui"], bm["ltg_pct"])},
+                {"End Use":           "DHW EUI (kWh/m²·yr)",
+                 "Your Model":        kpis["dhw_eui"],
+                 "Benchmark Median":  bm_eui(bm["dhw_pct"]),
+                 "Difference":        f"{round(kpis['dhw_eui'] - bm_eui(bm['dhw_pct']), 1):+}",
+                 "QA Status":         bm_status(kpis["dhw_eui"], bm["dhw_pct"])},
+                {"End Use":           "Receptacle EUI (kWh/m²·yr)",
+                 "Your Model":        kpis.get("recept_eui", 0),
+                 "Benchmark Median":  bm_eui(bm["recept_pct"]),
+                 "Difference":        f"{round(kpis.get('recept_eui',0) - bm_eui(bm['recept_pct']), 1):+}",
+                 "QA Status":         bm_status(kpis.get("recept_eui",0), bm["recept_pct"])},
+                {"End Use":           "Pumps EUI (kWh/m²·yr)",
+                 "Your Model":        kpis["pumps_eui"],
+                 "Benchmark Median":  bm_eui(bm["pumps_pct"]),
+                 "Difference":        f"{round(kpis['pumps_eui'] - bm_eui(bm['pumps_pct']), 1):+}",
+                 "QA Status":         bm_status(kpis["pumps_eui"], bm["pumps_pct"])},
+                {"End Use":           "GHGI (kgCO₂e/m²·yr)",
+                 "Your Model":        kpis["ghgi"],
+                 "Benchmark Median":  bm["median_ghgi"],
+                 "Difference":        f"{round(kpis['ghgi'] - bm['median_ghgi'], 1):+}",
+                 "QA Status":         status_color(kpis["ghgi"], bm["median_ghgi"]*0.85, bm["median_ghgi"], bm["median_ghgi"]*1.15)},
             ]
-            st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
         st.divider()
 
@@ -761,16 +946,17 @@ else:
         st.divider()
 
         # ── Export ──
-        st.markdown("### 📥 Export")
+        st.markdown("### 📥 Export Report")
         output=io.BytesIO()
         with pd.ExcelWriter(output,engine="openpyxl") as writer:
-            pd.DataFrame({"Field":["Project Name","Building Type","City","Climate Zone","Software","Model Type","Phase","Date",
+            pd.DataFrame({"Field":["Project Name","Building Type","City","Climate Zone","Subtype","Software","Model Type","Phase","Date",
                 "Floor Area (m²)","Total EUI","Electricity EUI","Gas EUI","Heating EUI","Cooling EUI","Fan EUI","Lighting EUI","DHW EUI","GHGI","Benchmark Percentile"],
-                "Value":[meta["project_name"],meta["building_type"],meta["city"],meta["climate_zone"],meta["software"],meta["model_type"],meta["phase"],meta["date"],
+                "Value":[meta["project_name"],meta["building_type"],meta["city"],meta["climate_zone"],meta.get("subtype",""),meta["software"],meta["model_type"],meta["phase"],meta["date"],
                 kpis["area"],kpis["total_eui"],kpis["elec_eui"],kpis["gas_eui"],kpis["heat_eui"],kpis["cool_eui"],kpis["fan_eui"],kpis["ltg_eui"],kpis["dhw_eui"],kpis["ghgi"],f"{pct}th" if pct else "N/A"],
             }).to_excel(writer,sheet_name="Summary",index=False)
             pd.DataFrame({"Level":[f[0].upper() for f in flags],"Icon":[f[1] for f in flags],"Message":[f[2] for f in flags]}).to_excel(writer,sheet_name="QA_QC_Flags",index=False)
             if bm: pd.DataFrame(rows).to_excel(writer,sheet_name="Benchmark",index=False)
+
         cd1,cd2=st.columns(2)
         with cd1:
             st.download_button("📥 Download Excel Report",data=output.getvalue(),
@@ -781,3 +967,106 @@ else:
                 for k in ["step","vals","results","headers","csv_df","mapping"]:
                     if k in st.session_state: del st.session_state[k]
                 st.session_state.step=1; st.rerun()
+
+        st.divider()
+
+        # ── Add to Benchmark ──
+        st.markdown("### 🏛️ Add This Model to Benchmark Database")
+        fail_count = sum(1 for f in flags if f[0]=="fail")
+        warn_count = sum(1 for f in flags if f[0]=="warn")
+
+        if fail_count > 0:
+            st.error(f"❌ This model has **{fail_count} QA/QC fail flag(s)**. Please resolve all failures before adding to the benchmark database.")
+        else:
+            if warn_count > 0:
+                st.warning(f"⚠️ This model has **{warn_count} review flag(s)**. You can still add it to the database, but review the flags first.")
+
+            with st.expander("ℹ️ What does adding to the benchmark do?", expanded=False):
+                st.markdown("""
+When you add this model to the benchmark database, it contributes to the pool of real projects used for future comparisons.
+
+**What gets recorded:**
+- Project name, building type, city, climate zone, subtype
+- Total EUI, all end-use EUIs, GHGI
+- Floor area, model type, phase, date, software
+- The modeller's name (optional)
+
+**How it updates the benchmark:**
+- Your project's EUI is added to the percentile dataset for that building type/city/subtype
+- The median EUI and end-use percentages in the Benchmarks sheet are **not changed automatically** — a senior reviewer can periodically recalculate and update those based on accumulated project data
+- All submitted projects are visible in the **Project Results** tab of the Google Sheet for full audit trail
+                """)
+
+            with st.form("add_to_benchmark_form"):
+                st.markdown("**Confirm submission details:**")
+                fc1, fc2, fc3 = st.columns(3)
+                with fc1:
+                    confirm_name    = st.text_input("Project Name",    value=meta["project_name"])
+                    confirm_modeller= st.text_input("Modeller Name",   placeholder="e.g. Vahid M.")
+                with fc2:
+                    confirm_subtype = st.text_input("Benchmark Subtype", value=meta.get("subtype","General"),
+                                                    help="e.g. Boiler + VAV · Medium, Heat Pump + DOAS")
+                    confirm_notes   = st.text_area("Notes (optional)", placeholder="e.g. NECB 2020 proposed model, 100% design stage", height=80)
+                with fc3:
+                    st.markdown("**Summary of values being submitted:**")
+                    st.markdown(f"""
+| Field | Value |
+|---|---|
+| Building Type | {meta['building_type']} |
+| City | {meta['city']} · Zone {meta['climate_zone']} |
+| Total EUI | **{kpis['total_eui']} kWh/m²·yr** |
+| GHGI | {kpis['ghgi']} kgCO₂e/m²·yr |
+| Floor Area | {round(kpis['area']):,} m² |
+| QA/QC | ✅ {sum(1 for f in flags if f[0]=="pass")} pass · ⚠️ {warn_count} review |
+                    """)
+
+                submitted = st.form_submit_button("✅ Add to Benchmark Database", type="primary", use_container_width=True)
+
+                if submitted:
+                    if not confirm_name.strip():
+                        st.error("Please enter a project name.")
+                    else:
+                        # Build the row to append to "Project Results" sheet
+                        project_row = [
+                            confirm_name.strip(),
+                            confirm_modeller.strip(),
+                            meta["building_type"],
+                            meta["city"],
+                            meta["climate_zone"],
+                            confirm_subtype.strip(),
+                            meta["software"],
+                            meta["model_type"],
+                            meta["phase"],
+                            meta["date"],
+                            round(kpis["area"]),
+                            kpis["total_eui"],
+                            kpis["elec_eui"],
+                            kpis["gas_eui"],
+                            kpis["heat_eui"],
+                            kpis["cool_eui"],
+                            kpis["fan_eui"],
+                            kpis["ltg_eui"],
+                            kpis["dhw_eui"],
+                            kpis.get("recept_eui", 0),
+                            kpis["pumps_eui"],
+                            kpis["ghgi"],
+                            f"{pct}th" if pct else "N/A",
+                            f"{sum(1 for f in flags if f[0]=='pass')} pass · {warn_count} review · {fail_count} fail",
+                            confirm_notes.strip(),
+                        ]
+
+                        ok, msg = append_to_google_sheet("Project Results", project_row)
+                        if ok:
+                            st.success(f"✅ **{confirm_name}** has been added to the benchmark database. Thank you!")
+                            st.info("💡 A senior reviewer can periodically update the Benchmarks sheet median EUI and percentile data using the accumulated project results.")
+                            load_benchmarks.clear()
+                        else:
+                            # Fallback — show the data so user can manually add it
+                            st.warning(f"⚠️ Could not write to Google Sheets automatically: {msg}")
+                            st.markdown("**Please manually copy this row into the 'Project Results' sheet in Google Sheets:**")
+                            headers_pr = ["Project Name","Modeller","Building Type","City","Climate Zone","Subtype",
+                                          "Software","Model Type","Phase","Date","Area (m²)","Total EUI","Elec EUI",
+                                          "Gas EUI","Heating EUI","Cooling EUI","Fan EUI","Lighting EUI","DHW EUI",
+                                          "Receptacle EUI","Pumps EUI","GHGI","Percentile","QA Flags","Notes"]
+                            st.dataframe(pd.DataFrame([dict(zip(headers_pr, project_row))]),
+                                        use_container_width=True, hide_index=True)
