@@ -30,9 +30,11 @@ st.markdown("""
     h1 { color: #0f4c81; font-size: 1.6rem !important; }
     h2 { color: #0f4c81; font-size: 1.2rem !important; }
     h3 { font-size: 1rem !important; }
-    .flag-pass { background:#f0fdf4; border-left:4px solid #16a34a; padding:10px 14px; border-radius:6px; margin:6px 0; }
-    .flag-warn { background:#fffbeb; border-left:4px solid #d97706; padding:10px 14px; border-radius:6px; margin:6px 0; }
-    .flag-fail { background:#fef2f2; border-left:4px solid #dc2626; padding:10px 14px; border-radius:6px; margin:6px 0; }
+    .flag-pass { background:#f0fdf4; border-left:4px solid #16a34a; padding:10px 14px; border-radius:6px; margin:6px 0; color:#14532d !important; font-size:13px; }
+    .flag-warn { background:#fffbeb; border-left:4px solid #d97706; padding:10px 14px; border-radius:6px; margin:6px 0; color:#78350f !important; font-size:13px; }
+    .flag-fail { background:#fef2f2; border-left:4px solid #dc2626; padding:10px 14px; border-radius:6px; margin:6px 0; color:#7f1d1d !important; font-size:13px; }
+    .flag-info { background:#eff6ff; border-left:4px solid #3b82f6; padding:10px 14px; border-radius:6px; margin:6px 0; color:#1e3a8a !important; font-size:13px; }
+    .flag-pass b, .flag-warn b, .flag-fail b, .flag-info b { font-size:15px; }
     .bm-card   { background:white; border-radius:10px; padding:16px 20px; border:1px solid #e2e8f0; margin-bottom:12px; }
     .bm-label  { font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase; letter-spacing:.05em; }
     .bm-value  { font-size:22px; font-weight:700; color:#0f4c81; line-height:1.2; }
