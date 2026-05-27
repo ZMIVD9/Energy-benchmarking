@@ -14,9 +14,6 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import date
-from openpyxl import load_workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -45,9 +42,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-# Always look for benchmarks.xlsx in the same folder as this script,
-# regardless of which directory the terminal was launched from
-BENCHMARK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "benchmarks.xlsx")
+# Google Sheet ID — replace this with your own Sheet ID
+# Get it from your sheet URL: docs.google.com/spreadsheets/d/YOUR_ID_HERE/edit
+SHEET_ID = st.secrets.get("SHEET_ID", "YOUR_SHEET_ID_HERE")
+SHEET_NAME = "Benchmarks"
+SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={SHEET_NAME}"
 MODEL_TYPES      = ["Proposed","Baseline","Existing"]
 PROJECT_PHASES   = ["Concept","Schematic Design","Design Development","100% Design","As-Built"]
 SOFTWARE_OPTIONS = ["IES VE","EnergyPlus","OpenStudio","eQUEST","Manual / Excel template","Other"]
@@ -136,13 +135,15 @@ FIELD_LABELS = {
     "process_kwh":       "Process / Other (kWh/yr)",
 }
 
-# ── Load benchmarks from Excel ─────────────────────────────────────────────────
+# ── Load benchmarks from Google Sheets ────────────────────────────────────────
+@st.cache_data(ttl=60)  # cache for 60 seconds — edits in Google Sheets appear within 1 minute
 def load_benchmarks():
-    """Read benchmarks.xlsx and return a dict keyed by (building_type, city, zone)."""
-    if not os.path.exists(BENCHMARK_FILE):
-        st.error(f"❌ Cannot find **{BENCHMARK_FILE}** — make sure it is in the same folder as app.py")
+    """Read from Google Sheets and return a dict keyed by (building_type, city, zone)."""
+    try:
+        df = pd.read_csv(SHEET_URL, dtype=str)
+    except Exception as e:
+        st.error(f"❌ Could not load benchmark data from Google Sheets. Check your SHEET_ID. Error: {e}")
         st.stop()
-    df = pd.read_excel(BENCHMARK_FILE, sheet_name="Benchmarks", dtype=str)
     df.columns = [c.strip() for c in df.columns]
     benchmarks = {}
     for _, row in df.iterrows():
@@ -167,57 +168,13 @@ def load_benchmarks():
                 "pct_data":    pct_data,
             }
         except Exception:
-            continue  # skip malformed rows
+            continue
     return benchmarks
 
-def save_benchmark_to_excel(new_row: dict):
-    """Append a new benchmark row to benchmarks.xlsx."""
-    wb = load_workbook(BENCHMARK_FILE)
-    ws = wb["Benchmarks"]
-    next_row = ws.max_row + 1
-    values = [
-        new_row["building_type"], new_row["city"], new_row["zone"],
-        new_row["good_eui"], new_row["median_eui"], new_row["high_eui"],
-        new_row["median_ghgi"], new_row["heat_pct"], new_row["cool_pct"],
-        new_row["fan_pct"], new_row["ltg_pct"], new_row["dhw_pct"],
-        new_row["recept_pct"], new_row["pumps_pct"],
-        new_row["pct_data"],
-    ]
-    row_fill = PatternFill("solid", fgColor="F0F9FF")
-    thin = Border(
-        left=Side(style="thin", color="D1D5DB"), right=Side(style="thin", color="D1D5DB"),
-        top=Side(style="thin", color="D1D5DB"),  bottom=Side(style="thin", color="D1D5DB"),
-    )
-    for col_idx, val in enumerate(values, 1):
-        cell = ws.cell(row=next_row, column=col_idx, value=val)
-        cell.fill   = row_fill
-        cell.border = thin
-        cell.font   = Font(size=10)
-        cell.alignment = Alignment(vertical="center")
-    wb.save(BENCHMARK_FILE)
-
-def update_benchmark_in_excel(row_index: int, new_row: dict):
-    """Update an existing benchmark row (1-based index into data rows, excluding header)."""
-    wb = load_workbook(BENCHMARK_FILE)
-    ws = wb["Benchmarks"]
-    excel_row = row_index + 1  # +1 for header
-    values = [
-        new_row["building_type"], new_row["city"], new_row["zone"],
-        new_row["good_eui"], new_row["median_eui"], new_row["high_eui"],
-        new_row["median_ghgi"], new_row["heat_pct"], new_row["cool_pct"],
-        new_row["fan_pct"], new_row["ltg_pct"], new_row["dhw_pct"],
-        new_row["recept_pct"], new_row["pumps_pct"], new_row["pct_data"],
-    ]
-    for col_idx, val in enumerate(values, 1):
-        ws.cell(row=excel_row, column=col_idx, value=val)
-    wb.save(BENCHMARK_FILE)
-
-def delete_benchmark_in_excel(row_index: int):
-    """Delete a benchmark row by its 1-based data index."""
-    wb = load_workbook(BENCHMARK_FILE)
-    ws = wb["Benchmarks"]
-    ws.delete_rows(row_index + 1)
-    wb.save(BENCHMARK_FILE)
+def reload_benchmarks():
+    """Clear cache and reload from Google Sheets."""
+    load_benchmarks.clear()
+    st.rerun()
 
 # ── Helper functions ───────────────────────────────────────────────────────────
 def guess_mapping(headers):
@@ -374,14 +331,18 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state.page == "⚙️ Manage Benchmarks":
     st.markdown("# ⚙️ Manage Benchmark Database")
-    st.markdown(f"All data is stored in **{BENCHMARK_FILE}** in the same folder as app.py. Changes save immediately.")
+    st.markdown("All benchmark data is stored in **Google Sheets**. Edit the sheet directly and changes appear in the app within 1 minute.")
+    st.info(f"📊 [Open Google Sheet to edit benchmarks](https://docs.google.com/spreadsheets/d/{SHEET_ID}/edit)", icon="📊")
     st.divider()
 
-    tab_view, tab_add, tab_edit, tab_delete = st.tabs(["📋 View All", "➕ Add New", "✏️ Edit Existing", "🗑️ Delete"])
+    tab_view, tab_howto = st.tabs(["📋 View All", "✏️ How to Edit"])
 
     # ── VIEW ──
     with tab_view:
         st.markdown("### All Benchmarks")
+        if st.button("🔄 Refresh from Google Sheets", use_container_width=False):
+            load_benchmarks.clear()
+            st.rerun()
         rows = []
         for (btype, city, zone), bm in BENCHMARKS.items():
             rows.append({
@@ -394,146 +355,35 @@ if st.session_state.page == "⚙️ Manage Benchmarks":
                 "Pumps %": bm["pumps_pct"],
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-        st.caption(f"Total: {len(rows)} benchmark records")
+        st.caption(f"Total: {len(rows)} benchmark records — refreshes automatically every 60 seconds")
 
-        # Download the Excel file
-        with open(BENCHMARK_FILE, "rb") as f:
-            st.download_button(
-                "📥 Download benchmarks.xlsx",
-                data=f.read(),
-                file_name="benchmarks.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
+    # ── HOW TO EDIT ──
+    with tab_howto:
+        st.markdown("### How to add or edit benchmarks")
+        st.markdown(f"**[👉 Click here to open the Google Sheet]"
+                    f"(https://docs.google.com/spreadsheets/d/{SHEET_ID}/edit)**")
+        st.markdown("""
+**To add a new benchmark:**
+1. Open the Google Sheet using the link above
+2. Scroll to the next empty row
+3. Fill in all columns — Building Type, City, Climate Zone, EUI values, percentages, and percentile data
+4. Save — the app picks up the change within 60 seconds
 
-    # ── ADD ──
-    with tab_add:
-        st.markdown("### Add New Benchmark")
-        st.info("Fill in all fields below and click **Save to Database**. The new record will be saved to benchmarks.xlsx immediately.")
+**To edit an existing benchmark:**
+1. Open the Google Sheet
+2. Find the row you want to change
+3. Edit the cell directly
+4. Save — changes appear in the app within 60 seconds
 
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            n_btype  = st.text_input("Building Type *", placeholder="e.g. School")
-            n_city   = st.text_input("City *",          placeholder="e.g. Edmonton")
-            n_zone   = st.text_input("Climate Zone *",  placeholder="e.g. 7")
+**To delete a benchmark:**
+1. Open the Google Sheet
+2. Right-click the row number → Delete row
+3. Save
 
-        with c2:
-            n_good   = st.number_input("Good Practice EUI (kWh/m²·yr) *", min_value=0.0, step=5.0)
-            n_median = st.number_input("Median EUI (kWh/m²·yr) *",        min_value=0.0, step=5.0)
-            n_high   = st.number_input("High Flag EUI (kWh/m²·yr) *",     min_value=0.0, step=5.0)
-            n_ghgi   = st.number_input("Median GHGI (kgCO₂e/m²·yr) *",   min_value=0.0, step=1.0)
-        with c3:
-            st.markdown("**End-Use Percentages** (should sum to ~100%)")
-            n_heat   = st.number_input("Heating %",      min_value=0.0, max_value=100.0, step=1.0, value=40.0)
-            n_cool   = st.number_input("Cooling %",      min_value=0.0, max_value=100.0, step=1.0, value=8.0)
-            n_fan    = st.number_input("Fan %",          min_value=0.0, max_value=100.0, step=1.0, value=15.0)
-            n_ltg    = st.number_input("Lighting %",     min_value=0.0, max_value=100.0, step=1.0, value=22.0)
-            n_dhw    = st.number_input("DHW %",          min_value=0.0, max_value=100.0, step=1.0, value=8.0)
-            n_recept = st.number_input("Receptacle %",   min_value=0.0, max_value=100.0, step=1.0, value=5.0)
-            n_pumps  = st.number_input("Pumps %",        min_value=0.0, max_value=100.0, step=1.0, value=2.0)
-            pct_sum = n_heat + n_cool + n_fan + n_ltg + n_dhw + n_recept + n_pumps
-            color = "🟢" if 95 <= pct_sum <= 105 else "🔴"
-            st.markdown(f"{color} Percentages sum to **{pct_sum:.0f}%** (target: ~100%)")
-
-        st.markdown("**Percentile Data** — 10 EUI values representing 10th to 100th percentile, comma separated")
-        n_pct_raw = st.text_input("Percentile Data *", placeholder="e.g. 95,110,125,141,155,165,180,195,210,230")
-
-        if st.button("💾 Save to Database", type="primary", use_container_width=True):
-            errors = []
-            if not n_btype.strip(): errors.append("Building Type is required")
-            if not n_city.strip():  errors.append("City is required")
-            if not n_zone.strip():  errors.append("Climate Zone is required")
-            if n_median <= 0:       errors.append("Median EUI must be greater than 0")
-            if not n_pct_raw.strip(): errors.append("Percentile Data is required")
-            else:
-                try:
-                    pct_vals = [float(x.strip()) for x in n_pct_raw.split(",") if x.strip()]
-                    if len(pct_vals) != 10: errors.append("Percentile Data must have exactly 10 values")
-                except:
-                    errors.append("Percentile Data must be numbers separated by commas")
-
-            # Check for duplicate
-            key = (n_btype.strip(), n_city.strip(), n_zone.strip())
-            if key in BENCHMARKS: errors.append(f"A benchmark for {n_btype} · {n_city} · Zone {n_zone} already exists. Use Edit to update it.")
-
-            if errors:
-                for e in errors: st.error(e)
-            else:
-                save_benchmark_to_excel({
-                    "building_type": n_btype.strip(), "city": n_city.strip(), "zone": n_zone.strip(),
-                    "good_eui": n_good, "median_eui": n_median, "high_eui": n_high, "median_ghgi": n_ghgi,
-                    "heat_pct": n_heat, "cool_pct": n_cool, "fan_pct": n_fan,
-                    "ltg_pct": n_ltg, "dhw_pct": n_dhw, "recept_pct": n_recept, "pumps_pct": n_pumps,
-                    "pct_data": n_pct_raw.strip(),
-                })
-                st.success(f"✅ Benchmark added: **{n_btype} · {n_city} · Zone {n_zone}**. Reloading...")
-                st.session_state.bm_reload += 1
-                st.rerun()
-
-    # ── EDIT ──
-    with tab_edit:
-        st.markdown("### Edit Existing Benchmark")
-        bm_keys   = list(BENCHMARKS.keys())
-        bm_labels = [f"{k[0]} · {k[1]} · Zone {k[2]}" for k in bm_keys]
-        selected  = st.selectbox("Select benchmark to edit", bm_labels)
-        sel_idx   = bm_labels.index(selected)
-        sel_key   = bm_keys[sel_idx]
-        bm        = BENCHMARKS[sel_key]
-
-        st.markdown(f"Editing: **{selected}**")
-        ec1, ec2, ec3 = st.columns(3)
-        with ec1:
-            e_btype  = st.text_input("Building Type",  value=sel_key[0], key="e_btype")
-            e_city   = st.text_input("City",           value=sel_key[1], key="e_city")
-            e_zone   = st.text_input("Climate Zone",   value=sel_key[2], key="e_zone")
-
-        with ec2:
-            e_good   = st.number_input("Good EUI",   value=bm["good_eui"],   step=5.0, key="e_good")
-            e_median = st.number_input("Median EUI", value=bm["median_eui"], step=5.0, key="e_median")
-            e_high   = st.number_input("High Flag",  value=bm["high_eui"],   step=5.0, key="e_high")
-            e_ghgi   = st.number_input("Median GHGI",value=bm["median_ghgi"],step=1.0, key="e_ghgi")
-        with ec3:
-            st.markdown("**End-Use Percentages**")
-            e_heat   = st.number_input("Heating %",    value=bm["heat_pct"],   step=1.0, key="e_heat")
-            e_cool   = st.number_input("Cooling %",    value=bm["cool_pct"],   step=1.0, key="e_cool")
-            e_fan    = st.number_input("Fan %",        value=bm["fan_pct"],    step=1.0, key="e_fan")
-            e_ltg    = st.number_input("Lighting %",   value=bm["ltg_pct"],    step=1.0, key="e_ltg")
-            e_dhw    = st.number_input("DHW %",        value=bm["dhw_pct"],    step=1.0, key="e_dhw")
-            e_recept = st.number_input("Receptacle %", value=bm["recept_pct"], step=1.0, key="e_recept")
-            e_pumps  = st.number_input("Pumps %",      value=bm["pumps_pct"],  step=1.0, key="e_pumps")
-            e_sum    = e_heat + e_cool + e_fan + e_ltg + e_dhw + e_recept + e_pumps
-            st.markdown(f"{'🟢' if 95<=e_sum<=105 else '🔴'} Sum: **{e_sum:.0f}%**")
-
-        e_pct_raw = st.text_input("Percentile Data (10 values, comma separated)", value=",".join(str(int(v)) for v in bm["pct_data"]), key="e_pct")
-
-        if st.button("💾 Save Changes", type="primary", use_container_width=True):
-            update_benchmark_in_excel(sel_idx + 1, {
-                "building_type": e_btype, "city": e_city, "zone": e_zone,
-                "good_eui": e_good, "median_eui": e_median, "high_eui": e_high, "median_ghgi": e_ghgi,
-                "heat_pct": e_heat, "cool_pct": e_cool, "fan_pct": e_fan,
-                "ltg_pct": e_ltg, "dhw_pct": e_dhw, "recept_pct": e_recept, "pumps_pct": e_pumps,
-                "pct_data": e_pct_raw,
-            })
-            st.success(f"✅ Benchmark updated: **{e_btype} · {e_city} · Zone {e_zone}**. Reloading...")
-            st.rerun()
-
-    # ── DELETE ──
-    with tab_delete:
-        st.markdown("### Delete a Benchmark")
-        st.warning("⚠️ This permanently removes the record from benchmarks.xlsx. This cannot be undone.")
-        bm_keys   = list(BENCHMARKS.keys())
-        bm_labels = [f"{k[0]} · {k[1]} · Zone {k[2]}" for k in bm_keys]
-        del_sel   = st.selectbox("Select benchmark to delete", bm_labels, key="del_sel")
-        del_idx   = bm_labels.index(del_sel)
-
-        col_confirm, col_btn = st.columns([3,1])
-        with col_confirm:
-            confirm = st.checkbox(f"I confirm I want to permanently delete **{del_sel}**")
-        with col_btn:
-            if st.button("🗑️ Delete", type="primary", disabled=not confirm, use_container_width=True):
-                delete_benchmark_in_excel(del_idx + 1)
-                st.success(f"✅ Deleted: **{del_sel}**. Reloading...")
-                st.rerun()
+**Column guide:**
+- Percentile Data: 10 numbers separated by commas e.g. `95,110,125,141,155,165,180,195,210,230`
+- All percentages should sum to approximately 100%
+        """)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
