@@ -1112,11 +1112,16 @@ else:
 
         # ── Add to Benchmark ──
         st.markdown("### 🏛️ Add This Model to Benchmark Database")
-        fail_count = sum(1 for f in flags if f[0]=="fail")
+        # Outstanding fails are based on the reviewer's (possibly overridden) QA Status in
+        # the comparison table, so overriding all flagged (🔴) rows to 🟢 clears the block below.
+        if comparison_edited is not None:
+            fail_count = int((comparison_edited["QA Status"] == "🔴").sum())
+        else:
+            fail_count = sum(1 for f in flags if f[0]=="fail")
         warn_count = sum(1 for f in flags if f[0]=="warn")
 
         if fail_count > 0:
-            st.error(f"❌ This model has **{fail_count} QA/QC fail flag(s)**. Please resolve all failures before adding to the benchmark database.")
+            st.error(f"❌ This model has **{fail_count} unresolved QA/QC fail(s)** (🔴) in the comparison table above. Override them to 🟢 after review — or fix the model — before adding to the benchmark database.")
         else:
             if warn_count > 0:
                 st.warning(f"⚠️ This model has **{warn_count} review flag(s)**. You can still add it to the database, but review the flags first.")
