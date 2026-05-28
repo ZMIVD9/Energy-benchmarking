@@ -2,7 +2,7 @@
 Energy Model Benchmarking & QA/QC Platform
 ===========================================
 Run:  streamlit run app.py
-Deps: pip install streamlit pandas plotly openpyxl reportlab
+Deps: pip install streamlit pandas plotly openpyxl
 
 IMPORTANT: Keep benchmarks.xlsx in the same folder as app.py
 """
@@ -414,131 +414,6 @@ def make_pie(labels, values, title):
     )
     return fig
 
-def build_pdf_report(meta, kpis, bm, flags, pct, comparison_df):
-    """Build a one-file PDF QA/QC report (replaces the previous Excel export).
-
-    Emoji status dots and subscript characters are mapped to plain text so they
-    render reliably in the PDF's base fonts. The reviewer's overridden QA Status
-    and Comments (from the editable Benchmark Comparison table) are included.
-    """
-    from reportlab.lib.pagesizes import letter
-    from reportlab.lib import colors
-    from reportlab.lib.units import cm
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-    from xml.sax.saxutils import escape as _xml
-
-    STATUS_WORD = {"🟢": "Pass", "🟡": "OK", "🟠": "Watch", "🔴": "Fail"}
-    FLAG_WORD   = {"pass": "PASS", "warn": "REVIEW", "fail": "FAIL", "info": "INFO"}
-
-    def desub(x):                       # subscript 2 -> 2 (base fonts can't render ₂)
-        return str(x).replace("₂", "2")
-
-    def destatus(x):                    # emoji dot -> word
-        s = desub(x)
-        for k, v in STATUS_WORD.items():
-            s = s.replace(k, v)
-        return s.strip()
-
-    def para(x, style):                 # XML-safe paragraph
-        return Paragraph(_xml(desub(x)), style)
-
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buf, pagesize=letter,
-        topMargin=1.4*cm, bottomMargin=1.4*cm, leftMargin=1.4*cm, rightMargin=1.4*cm,
-        title=f"QA/QC Report - {meta['project_name'] or 'Project'}",
-    )
-    styles = getSampleStyleSheet()
-    h1    = ParagraphStyle("h1", parent=styles["Heading1"], textColor=colors.HexColor("#0f4c81"), fontSize=17, spaceAfter=2)
-    h2    = ParagraphStyle("h2", parent=styles["Heading2"], textColor=colors.HexColor("#0f4c81"), fontSize=12, spaceBefore=8, spaceAfter=4)
-    body  = styles["BodyText"]
-    small = ParagraphStyle("small", parent=body, fontSize=9, textColor=colors.HexColor("#64748b"))
-    cell  = ParagraphStyle("cell", parent=body, fontSize=8, leading=10)
-
-    elems = []
-
-    # Title + metadata line
-    elems.append(para(meta["project_name"] or "Project Results", h1))
-    sub = f"{meta['building_type']} · {meta['city']} · Climate Zone {meta['climate_zone']}"
-    if meta.get("subtype", "General") not in ("", "General"):
-        sub += f" · {meta['subtype']}"
-    sub += f" · {meta['model_type']} · {meta['phase']} · {meta['software']} · {meta['date']}"
-    elems.append(para(sub, small))
-    elems.append(Spacer(1, 8))
-
-    # Overall result
-    fc = {"pass": 0, "warn": 0, "fail": 0}
-    for f in flags:
-        fc[f[0]] = fc.get(f[0], 0) + 1
-    overall = "Issues Found" if fc["fail"] > 0 else "Review Required" if fc["warn"] > 0 else "All Clear"
-    pct_line = f"  |  Benchmark percentile: {pct}th (lower = better)" if pct else ""
-    elems.append(para(
-        f"<b>Overall QA/QC:</b> {overall} — Pass {fc['pass']} · Review {fc['warn']} · Fail {fc['fail']}{pct_line}",
-        body))
-    elems.append(Spacer(1, 10))
-
-    # Energy summary
-    elems.append(para("Energy Summary", h2))
-    summ = [
-        ["Metric", "Value", "Benchmark median"],
-        ["Total EUI (kWh/m2/yr)",  kpis["total_eui"], bm["median_eui"]  if bm else "-"],
-        ["GHGI (kgCO2e/m2/yr)",    kpis["ghgi"],      bm["median_ghgi"] if bm else "-"],
-        ["Electricity EUI",        kpis["elec_eui"],  "-"],
-        ["Gas EUI",                kpis["gas_eui"],   "-"],
-        ["Floor area (m2)",        round(kpis["area"]), "-"],
-    ]
-    t = Table(summ, hAlign="LEFT", colWidths=[7*cm, 4*cm, 5*cm])
-    t.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f4c81")),
-        ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
-        ("FONTSIZE",   (0, 0), (-1, -1), 9),
-        ("GRID",       (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
-        ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-    ]))
-    elems.append(t)
-
-    # Benchmark comparison with reviewer overrides + comments
-    if bm and comparison_df is not None:
-        elems.append(para("Benchmark Comparison & Reviewer Notes", h2))
-        header = ["End Use", "Your Model", "Bench. Median", "Diff.", "Auto Flag", "QA Status", "Comment"]
-        data = [header]
-        for _, rr in comparison_df.iterrows():
-            data.append([
-                para(rr["End Use"], cell),
-                rr["Your Model"],
-                rr["Benchmark Median"],
-                str(rr["Difference"]),
-                destatus(rr["Auto Flag"]),
-                destatus(rr["QA Status"]),
-                para(rr.get("Comment", "") or "", cell),
-            ])
-        ct = Table(data, hAlign="LEFT", repeatRows=1,
-                   colWidths=[4.0*cm, 2.0*cm, 2.4*cm, 1.5*cm, 1.7*cm, 1.7*cm, 4.0*cm])
-        ct.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f4c81")),
-            ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
-            ("FONTSIZE",   (0, 0), (-1, -1), 8),
-            ("GRID",       (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
-            ("VALIGN",     (0, 0), (-1, -1), "TOP"),
-            ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ]))
-        elems.append(ct)
-
-    # QA/QC flags
-    elems.append(para("QA/QC Flags", h2))
-    for level, icon, msg in flags:
-        elems.append(para(f"<b>[{FLAG_WORD.get(level, level.upper())}]</b> {msg}", body))
-        elems.append(Spacer(1, 2))
-
-    doc.build(elems)
-    return buf.getvalue()
-
 # ── Session state ─────────────────────────────────────────────────────────────
 if "step"    not in st.session_state: st.session_state.step    = 1
 if "vals"    not in st.session_state: st.session_state.vals    = {}
@@ -649,14 +524,15 @@ elif st.session_state.page == "📚 Benchmark Explorer":
     st.markdown("Browse the benchmark database by building type and location — no upload required.")
     st.divider()
 
-    cf1, cf2 = st.columns(2)
+    cf1, cf2, cf3 = st.columns(3)
     with cf1: bx_type = st.selectbox("Building Type", ALL_BUILDING_TYPES)
     with cf2: bx_city = st.selectbox("City", CITIES + ["All cities"])
+    with cf3: bx_zone = st.selectbox("Climate Zone", CLIMATE_ZONES, index=min(3, len(CLIMATE_ZONES)-1))
 
-    matches = {k:v for k,v in BENCHMARKS.items() if k[0]==bx_type and (bx_city=="All cities" or k[1]==bx_city)}
+    matches = {k:v for k,v in BENCHMARKS.items() if k[0]==bx_type and (bx_city=="All cities" or k[1]==bx_city) and k[2]==bx_zone}
 
     if not matches:
-        st.warning(f"No benchmark data found for **{bx_type}** in **{bx_city}**. Try a different combination, or add a new row in your Google Sheet.")
+        st.warning(f"No benchmark data found for **{bx_type}** in **{bx_city}** (Zone {bx_zone}). Try a different combination, or add a new row in your Google Sheet.")
 
         st.stop()
 
@@ -733,7 +609,7 @@ else:
 
     if st.session_state.step == 1:
         st.markdown("## Step 1 — Upload Simulation Results or Enter Manually")
-        tab_upload, tab_manual = st.tabs(["📂 Upload CSV","⌨️ Enter Manually"])
+        tab_upload, tab_manual, tab_sample = st.tabs(["📂 Upload CSV","⌨️ Enter Manually","📋 Load Sample Data"])
         with tab_upload:
             uploaded = st.file_uploader("Choose CSV file", type=["csv"], label_visibility="collapsed")
             if uploaded:
@@ -770,6 +646,14 @@ else:
                 manual["process_kwh"]       = st.number_input("Process / Other (kWh/yr)",    min_value=0.0, step=500.0,  format="%.0f")
             if st.button("Next: Building Info →", type="primary"):
                 st.session_state.vals = manual; st.session_state.step = 3; st.rerun()
+        with tab_sample:
+            st.markdown("**Edmonton school, 8,500 m², Boiler + VAV** — DHW is zero to trigger a QA flag example")
+            if st.button("Load Sample & Continue →", type="primary"):
+                st.session_state.vals = {"electricity_kwh":720000,"gas_kwh":480000,"area_m2":8500,
+                    "heating_kwh":380000,"cooling_kwh":25500,
+                    "central_fan_kwh":170000,"local_fan_kwh":45000,"exhaust_fan_kwh":25000,
+                    "lighting_kwh":170000,"dhw_kwh":0,"pumps_kwh":42000}
+                st.session_state.step = 3; st.rerun()
 
     elif st.session_state.step == 2:
         st.markdown("## Step 2 — Map Columns")
@@ -995,7 +879,6 @@ else:
         st.divider()
 
         # ── Section 3: Benchmark Table ──
-        comparison_edited = None
         if bm:
             st.markdown("### 📋 Benchmark Comparison")
             st.caption("QA/QC thresholds: 🟢 ≤ −15% of median &nbsp; 🟡 Within ±15% of median &nbsp; 🔴 > +15% of median")
@@ -1052,35 +935,7 @@ else:
                  "Difference":        f"{round(kpis['ghgi'] - bm['median_ghgi'], 1):+}",
                  "QA Status":         status_color(kpis["ghgi"], bm["median_ghgi"]*0.85, bm["median_ghgi"], bm["median_ghgi"]*1.15)},
             ]
-
-            # Editable comparison: reviewer can override the QA Status and add a Comment.
-            # "Auto Flag" preserves the tool's original computed status for audit.
-            comp_df = pd.DataFrame(rows).rename(columns={"QA Status": "Auto Flag"})
-            comp_df["QA Status"] = comp_df["Auto Flag"]   # editable; defaults to the auto flag
-            comp_df["Comment"]   = ""
-            comp_df = comp_df[["End Use","Your Model","Benchmark Median","Difference","Auto Flag","QA Status","Comment"]]
-
-            st.caption("Override the **QA Status** of any row (e.g. change 🔴 Fail to 🟢 Pass after review) and add a **Comment**. The **Auto Flag** column keeps the tool's original result for audit, and your overrides + comments are saved into the exported PDF.")
-            comparison_edited = st.data_editor(
-                comp_df, use_container_width=True, hide_index=True, key="bm_review",
-                column_config={
-                    "End Use":          st.column_config.TextColumn(disabled=True),
-                    "Your Model":       st.column_config.NumberColumn(disabled=True),
-                    "Benchmark Median": st.column_config.NumberColumn(disabled=True),
-                    "Difference":       st.column_config.TextColumn(disabled=True),
-                    "Auto Flag":        st.column_config.TextColumn(
-                                            "Auto Flag", disabled=True,
-                                            help="Status the tool calculated automatically — kept for audit."),
-                    "QA Status":        st.column_config.SelectboxColumn(
-                                            "QA Status", options=["🟢","🟡","🟠","🔴"], required=True,
-                                            help="Reviewer status — override to 🟢 to pass a flagged item."),
-                    "Comment":          st.column_config.TextColumn(
-                                            "Comment", help="Reviewer notes / justification for any override."),
-                },
-            )
-            n_over = int((comparison_edited["QA Status"] != comparison_edited["Auto Flag"]).sum())
-            if n_over:
-                st.caption(f"✏️ {n_over} status value(s) overridden by reviewer.")
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
         st.divider()
 
@@ -1094,18 +949,56 @@ else:
 
         # ── Export ──
         st.markdown("### 📥 Export Report")
-        pdf_bytes = build_pdf_report(meta, kpis, bm, flags, pct, comparison_edited)
+        try:
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                # Summary sheet
+                pd.DataFrame({
+                    "Field": ["Project Name","Building Type","City","Climate Zone","Subtype",
+                              "Software","Model Type","Phase","Date","Floor Area (m²)",
+                              "Total EUI (kWh/m²·yr)","Electricity EUI","Gas EUI",
+                              "Heating EUI","Cooling EUI","Fan EUI","Lighting EUI",
+                              "DHW EUI","GHGI (kgCO₂e/m²)","Benchmark Percentile"],
+                    "Value": [meta["project_name"], meta["building_type"], meta["city"],
+                              meta["climate_zone"], meta.get("subtype",""),
+                              meta["software"], meta["model_type"], meta["phase"], meta["date"],
+                              round(kpis["area"]), kpis["total_eui"], kpis["elec_eui"],
+                              kpis["gas_eui"], kpis["heat_eui"], kpis["cool_eui"],
+                              kpis["fan_eui"], kpis["ltg_eui"], kpis["dhw_eui"],
+                              kpis["ghgi"], f"{pct}th" if pct else "N/A"],
+                }).to_excel(writer, sheet_name="Summary", index=False)
 
-        cd1,cd2=st.columns(2)
+                # QA/QC Flags sheet
+                pd.DataFrame({
+                    "Level":   [f[0].upper() for f in flags],
+                    "Status":  [f[1] for f in flags],
+                    "Message": [f[2] for f in flags],
+                }).to_excel(writer, sheet_name="QA_QC_Flags", index=False)
+
+                # Benchmark comparison sheet
+                if bm and rows:
+                    pd.DataFrame(rows).to_excel(writer, sheet_name="Benchmark_Comparison", index=False)
+
+            excel_ready = True
+        except Exception as export_err:
+            excel_ready = False
+            st.error(f"Could not generate Excel report: {export_err}")
+
+        cd1, cd2 = st.columns(2)
         with cd1:
-            st.download_button("📄 Download PDF Report", data=pdf_bytes,
-                file_name=f"QA_QC_{(meta['project_name'] or 'report').replace(' ','_')}_{meta['date']}.pdf",
-                mime="application/pdf", use_container_width=True)
+            if excel_ready:
+                st.download_button(
+                    "📥 Download Excel Report",
+                    data=output.getvalue(),
+                    file_name=f"QA_QC_{(meta['project_name'] or 'report').replace(' ','_')}_{meta['date']}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
         with cd2:
-            if st.button("← Run Another Project",use_container_width=True):
+            if st.button("← Run Another Project", use_container_width=True):
                 for k in ["step","vals","results","headers","csv_df","mapping"]:
                     if k in st.session_state: del st.session_state[k]
-                st.session_state.step=1; st.rerun()
+                st.session_state.step = 1; st.rerun()
 
         st.divider()
 
