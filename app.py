@@ -473,8 +473,8 @@ def build_pdf_report(meta, kpis, bm, flags, pct, comparison_df):
         fc[f[0]] = fc.get(f[0], 0) + 1
     overall = "Issues Found" if fc["fail"] > 0 else "Review Required" if fc["warn"] > 0 else "All Clear"
     pct_line = f"  |  Benchmark percentile: {pct}th (lower = better)" if pct else ""
-    elems.append(para(
-        f"<b>Overall QA/QC:</b> {overall} — Pass {fc['pass']} · Review {fc['warn']} · Fail {fc['fail']}{pct_line}",
+    elems.append(Paragraph(
+        desub(f"<b>Overall QA/QC:</b> {overall} — Pass {fc['pass']} · Review {fc['warn']} · Fail {fc['fail']}{pct_line}"),
         body))
     elems.append(Spacer(1, 10))
 
@@ -533,7 +533,8 @@ def build_pdf_report(meta, kpis, bm, flags, pct, comparison_df):
     # QA/QC flags
     elems.append(para("QA/QC Flags", h2))
     for level, icon, msg in flags:
-        elems.append(para(f"<b>[{FLAG_WORD.get(level, level.upper())}]</b> {msg}", body))
+        safe_msg = _xml(desub(msg))
+        elems.append(Paragraph(f"<b>[{FLAG_WORD.get(level, level.upper())}]</b> {safe_msg}", body))
         elems.append(Spacer(1, 2))
 
     doc.build(elems)
