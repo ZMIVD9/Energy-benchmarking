@@ -1147,7 +1147,7 @@ When you add this model to the benchmark database, it contributes to the pool of
                 fc1, fc2, fc3 = st.columns(3)
                 with fc1:
                     confirm_name    = st.text_input("Project Name",    value=meta["project_name"])
-                    confirm_modeller= st.text_input("Modeller Name",   placeholder="e.g. Vahid M.")
+                    confirm_modeller= st.text_input("Modeller Name",   placeholder="e.g. Vahid ")
                 with fc2:
                     confirm_subtype = st.text_input("Benchmark Subtype", value=meta.get("subtype","General"),
                                                     help="e.g. Boiler + VAV · Medium, Heat Pump + DOAS")
