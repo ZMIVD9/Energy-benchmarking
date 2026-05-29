@@ -896,11 +896,12 @@ elif st.session_state.page == "📚 Benchmark Explorer":
         bar_colors  = ["#16a34a" if v<=bm["good_eui"] else "#d97706" if v<=bm["median_eui"] else "#ea580c" if v<=bm["high_eui"] else "#dc2626" for v in sorted_pcts]
         fig_pct = go.Figure(go.Bar(x=[f"{i*10}th" for i in range(1,11)], y=sorted_pcts, marker_color=bar_colors,
             hovertemplate="<b>%{x} percentile</b><br>EUI: %{y} kWh/m²·yr<extra></extra>"))
-        fig_pct.add_hline(y=bm["good_eui"],   line_dash="dot",  line_color="#16a34a", line_width=1.5, annotation_text=f"Good: {bm['good_eui']}",        annotation_position="top left",    annotation_font_color="#16a34a")
-        fig_pct.add_hline(y=bm["median_eui"], line_dash="dash", line_color="#d97706", line_width=2,   annotation_text=f"Median: {bm['median_eui']}",    annotation_position="bottom left", annotation_font_color="#d97706")
-        fig_pct.add_hline(y=bm["high_eui"],   line_dash="dot",  line_color="#dc2626", line_width=1.5, annotation_text=f"High flag: {bm['high_eui']}",   annotation_position="top left",    annotation_font_color="#dc2626")
+        fig_pct.add_hline(y=bm["good_eui"],   line_dash="dot",  line_color="#16a34a", line_width=1.5)
+        fig_pct.add_hline(y=bm["median_eui"], line_dash="dash", line_color="#d97706", line_width=2)
+        fig_pct.add_hline(y=bm["high_eui"],   line_dash="dot",  line_color="#dc2626", line_width=1.5)
         fig_pct.update_layout(template="plotly_white", height=300, xaxis_title="Percentile", yaxis_title="EUI (kWh/m²·yr)", margin=dict(t=20,b=10))
         st.plotly_chart(fig_pct, use_container_width=True)
+        st.caption(f"🟩 Good (−15%): {bm['good_eui']}  ·  🟧 Median: {bm['median_eui']}  ·  🟥 High flag (+15%): {bm['high_eui']}  kWh/m²·yr")
 
         if bm.get("median_tedi") and bm.get("tedi_pct_data"):
             st.markdown("#### Portfolio Percentile Distribution — TEDI")
@@ -908,11 +909,12 @@ elif st.session_state.page == "📚 Benchmark Explorer":
             tedi_colors = ["#16a34a" if v<=bm["good_tedi"] else "#d97706" if v<=bm["median_tedi"] else "#ea580c" if v<=bm["high_tedi"] else "#dc2626" for v in sorted_tedi]
             fig_tedi = go.Figure(go.Bar(x=[f"{i*10}th" for i in range(1,11)], y=sorted_tedi, marker_color=tedi_colors,
                 hovertemplate="<b>%{x} percentile</b><br>TEDI: %{y} kWh/m²·yr<extra></extra>"))
-            fig_tedi.add_hline(y=bm["good_tedi"],   line_dash="dot",  line_color="#16a34a", line_width=1.5, annotation_text=f"Good: {bm['good_tedi']}",      annotation_position="top left",    annotation_font_color="#16a34a")
-            fig_tedi.add_hline(y=bm["median_tedi"], line_dash="dash", line_color="#d97706", line_width=2,   annotation_text=f"Median: {bm['median_tedi']}",  annotation_position="bottom left", annotation_font_color="#d97706")
-            fig_tedi.add_hline(y=bm["high_tedi"],   line_dash="dot",  line_color="#dc2626", line_width=1.5, annotation_text=f"High flag: {bm['high_tedi']}", annotation_position="top left",    annotation_font_color="#dc2626")
+            fig_tedi.add_hline(y=bm["good_tedi"],   line_dash="dot",  line_color="#16a34a", line_width=1.5)
+            fig_tedi.add_hline(y=bm["median_tedi"], line_dash="dash", line_color="#d97706", line_width=2)
+            fig_tedi.add_hline(y=bm["high_tedi"],   line_dash="dot",  line_color="#dc2626", line_width=1.5)
             fig_tedi.update_layout(template="plotly_white", height=300, xaxis_title="Percentile", yaxis_title="TEDI (kWh/m²·yr)", margin=dict(t=20,b=10))
             st.plotly_chart(fig_tedi, use_container_width=True)
+            st.caption(f"🟩 Good (−15%): {bm['good_tedi']}  ·  🟧 Median: {bm['median_tedi']}  ·  🟥 High flag (+15%): {bm['high_tedi']}  kWh/m²·yr")
 
         st.divider()
 
