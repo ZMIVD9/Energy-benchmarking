@@ -1174,13 +1174,14 @@ else:
             rows = comp_rows   # built once at the top of Step 4 (same statuses drive the QA/QC Flags)
 
             # Editable comparison: reviewer can override the QA Status and add a Comment.
-            # "Auto Flag" preserves the tool's original computed status for audit.
+            # "Auto Flag" preserves the tool's original 4-level computed status for audit;
+            # the editable QA Status is a binary pass/fail decision (🟢 / 🔴).
             comp_df = pd.DataFrame(rows).rename(columns={"QA Status": "Auto Flag"})
-            comp_df["QA Status"] = comp_df["Auto Flag"]   # editable; defaults to the auto flag
+            comp_df["QA Status"] = comp_df["Auto Flag"].apply(lambda s: "🔴" if s == "🔴" else "🟢")  # default: red only for fails
             comp_df["Comment"]   = ""
             comp_df = comp_df[["End Use","Your Model","Benchmark Median","Difference","Auto Flag","QA Status","Comment"]]
 
-            st.caption("Override the **QA Status** of any row (e.g. change 🔴 Fail to 🟢 Pass after review) and add a **Comment**. The **Auto Flag** column keeps the tool's original result for audit, and your overrides + comments are saved into the exported PDF.")
+            st.caption("Set the **QA Status** of any row to 🟢 Pass or 🔴 Fail (e.g. pass a flagged item after review) and add a **Comment**. The **Auto Flag** column keeps the tool's original result for audit, and your overrides + comments are saved into the exported PDF.")
             comparison_edited = st.data_editor(
                 comp_df, use_container_width=True, hide_index=True, key="bm_review",
                 column_config={
@@ -1192,13 +1193,14 @@ else:
                                             "Auto Flag", disabled=True,
                                             help="Status the tool calculated automatically — kept for audit."),
                     "QA Status":        st.column_config.SelectboxColumn(
-                                            "QA Status", options=["🟢","🟡","🟠","🔴"], required=True,
-                                            help="Reviewer status — override to 🟢 to pass a flagged item."),
+                                            "QA Status", options=["🟢","🔴"], required=True,
+                                            help="Reviewer decision — 🟢 Pass or 🔴 Fail."),
                     "Comment":          st.column_config.TextColumn(
                                             "Comment", help="Reviewer notes / justification for any override."),
                 },
             )
-            n_over = int((comparison_edited["QA Status"] != comparison_edited["Auto Flag"]).sum())
+            binary_default = comp_df["QA Status"]
+            n_over = int((comparison_edited["QA Status"].values != binary_default.values).sum())
             if n_over:
                 st.caption(f"✏️ {n_over} status value(s) overridden by reviewer.")
 
