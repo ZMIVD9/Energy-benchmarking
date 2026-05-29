@@ -1036,20 +1036,38 @@ else:
             st.warning("No benchmark found for this combination. KPIs will be calculated but no comparison will be shown.")
 
         province = CITY_PROVINCE.get(city)
-        ef_elec_default = elec_factor_for(city)
-        ef_gas_default  = gas_factor_for(city)
-        prov_note = f" for **{province}**" if province else ""
-        st.markdown(f"**GHG Emission Factors (kgCO₂e/kWh)** — pre-filled from Canada 2026 provincial factors{prov_note}; edit any value to override. Set to 0 to skip GHGI.")
+        # Dropdown options: province/fuel → factor (kg CO₂e/kWh), shown with the value beside the name.
+        elec_opts  = {p: round(g/1000, 4)              for p, g in ELEC_CO2E_G_PER_KWH.items()}
+        gas_opts   = {p: round(g/NG_KWH_PER_M3/1000,4) for p, g in NG_CO2_G_PER_M3.items()}
+        # Other fuels converted from NIR Table 3.3 (g GHG/L) using AR5 GWP + typical liquid HHV.
+        other_opts = {"None": 0.0, "Propane": 0.2197, "Butane": 0.2229}
+        CUSTOM = "Custom value…"
+
+        st.markdown("**GHG Emission Factors (kg CO₂e/kWh)** — select a province/fuel value (Canada 2026 tables) or choose *Custom value…* to enter your own. Choose 0 / None to skip GHGI.")
         ef1, ef2, ef3 = st.columns(3)
         with ef1:
-            ef_elec = st.number_input("Electricity", min_value=0.0, step=0.001, format="%.4f", value=ef_elec_default,
-                                      help="Default = provincial electricity consumption intensity (Table 5.3, 2026), e.g. Alberta 0.438, BC 0.018, Ontario 0.059 kg CO₂e/kWh. Editable.")
+            opts = [f"{p} — {v:.4f}" for p, v in elec_opts.items()] + [CUSTOM]
+            di = list(elec_opts).index(province) if province in elec_opts else 0
+            sel = st.selectbox("Electricity", opts, index=di, key=f"ef_elec_sel_{city}",
+                               help="Provincial electricity consumption intensity (Table 5.3, 2026).")
+            ef_elec = (st.number_input("Electricity — custom", min_value=0.0, step=0.001, format="%.4f",
+                                       value=elec_factor_for(city), key=f"ef_elec_cust_{city}")
+                       if sel == CUSTOM else elec_opts[sel.rsplit(" — ", 1)[0]])
         with ef2:
-            ef_gas  = st.number_input("Natural Gas", min_value=0.0, step=0.001, format="%.4f", value=ef_gas_default,
-                                      help="Default converted from marketable natural-gas CO₂ (Table 1.3, 2026, g CO₂/m³) using 10.55 kWh/m³ — e.g. Alberta ≈ 0.186 kg CO₂/kWh. Editable.")
+            opts = [f"{p} — {v:.4f}" for p, v in gas_opts.items()] + [CUSTOM]
+            di = list(gas_opts).index(province) if province in gas_opts else 0
+            sel = st.selectbox("Natural Gas", opts, index=di, key=f"ef_gas_sel_{city}",
+                               help="Marketable natural-gas CO₂ (Table 1.3, 2026, g CO₂/m³) ÷ 10.55 kWh/m³.")
+            ef_gas = (st.number_input("Natural Gas — custom", min_value=0.0, step=0.001, format="%.4f",
+                                      value=gas_factor_for(city), key=f"ef_gas_cust_{city}")
+                      if sel == CUSTOM else gas_opts[sel.rsplit(" — ", 1)[0]])
         with ef3:
-            ef_other = st.number_input("Other Resources / Biomass", min_value=0.0, step=0.01, format="%.4f", value=0.0,
-                                       help="No standard default — enter the factor for your other fuel (e.g. propane ≈ 0.23 kg CO₂/kWh).")
+            opts = [f"{p} — {v:.4f}" for p, v in other_opts.items()] + [CUSTOM]
+            sel = st.selectbox("Other Resources / Biomass", opts, index=0, key=f"ef_other_sel_{city}",
+                               help="Propane/Butane converted from Table 3.3; or pick Custom for biomass/other.")
+            ef_other = (st.number_input("Other — custom", min_value=0.0, step=0.001, format="%.4f",
+                                        value=0.0, key=f"ef_other_cust_{city}")
+                        if sel == CUSTOM else other_opts[sel.rsplit(" — ", 1)[0]])
 
         cb,cn = st.columns([1,4])
         with cb:
