@@ -528,37 +528,39 @@ def build_comparison_rows(kpis, bm):
     def bs(val, pct):
         med = bm["median_eui"] * pct / 100
         return status_color(val, med*0.85, med, med*1.15)
+    def pdiff(your, med):  # percentage difference vs benchmark median
+        return f"{(your-med)/med*100:+.0f}%" if med else "n/a"
     rows = [
         {"End Use":"Total EUI (kWh/m²·yr)","Your Model":kpis["total_eui"],"Benchmark Median":bm["median_eui"],
-         "Difference":f"{round(kpis['total_eui']-bm['median_eui'],1):+}",
+         "Difference":pdiff(kpis["total_eui"], bm["median_eui"]),
          "QA Status":status_color(kpis["total_eui"],bm["good_eui"],bm["median_eui"],bm["high_eui"])},
     ]
     # TEDI sits right next to Total EUI when both a benchmark and a model value are present.
     if bm.get("median_tedi") and kpis.get("tedi", 0) > 0:
         rows.append(
             {"End Use":"TEDI (kWh/m²·yr)","Your Model":kpis["tedi"],"Benchmark Median":bm["median_tedi"],
-             "Difference":f"{round(kpis['tedi']-bm['median_tedi'],1):+}",
+             "Difference":pdiff(kpis["tedi"], bm["median_tedi"]),
              "QA Status":status_color(kpis["tedi"],bm["good_tedi"],bm["median_tedi"],bm["high_tedi"])})
     rows += [
         {"End Use":"Heating EUI (kWh/m²·yr)","Your Model":kpis["heat_eui"],"Benchmark Median":be(bm["heat_pct"]),
-         "Difference":f"{round(kpis['heat_eui']-be(bm['heat_pct']),1):+}","QA Status":bs(kpis["heat_eui"],bm["heat_pct"])},
+         "Difference":pdiff(kpis["heat_eui"], be(bm["heat_pct"])),"QA Status":bs(kpis["heat_eui"],bm["heat_pct"])},
         {"End Use":"Cooling EUI (kWh/m²·yr)","Your Model":kpis["cool_eui"],"Benchmark Median":be(bm["cool_pct"]),
-         "Difference":f"{round(kpis['cool_eui']-be(bm['cool_pct']),1):+}","QA Status":bs(kpis["cool_eui"],bm["cool_pct"])},
+         "Difference":pdiff(kpis["cool_eui"], be(bm["cool_pct"])),"QA Status":bs(kpis["cool_eui"],bm["cool_pct"])},
         {"End Use":"Fan EUI (kWh/m²·yr)","Your Model":kpis["fan_eui"],"Benchmark Median":be(bm["fan_pct"]),
-         "Difference":f"{round(kpis['fan_eui']-be(bm['fan_pct']),1):+}","QA Status":bs(kpis["fan_eui"],bm["fan_pct"])},
+         "Difference":pdiff(kpis["fan_eui"], be(bm["fan_pct"])),"QA Status":bs(kpis["fan_eui"],bm["fan_pct"])},
         {"End Use":"Lighting EUI (kWh/m²·yr)","Your Model":kpis["ltg_eui"],"Benchmark Median":be(bm["ltg_pct"]),
-         "Difference":f"{round(kpis['ltg_eui']-be(bm['ltg_pct']),1):+}","QA Status":bs(kpis["ltg_eui"],bm["ltg_pct"])},
+         "Difference":pdiff(kpis["ltg_eui"], be(bm["ltg_pct"])),"QA Status":bs(kpis["ltg_eui"],bm["ltg_pct"])},
         {"End Use":"DHW EUI (kWh/m²·yr)","Your Model":kpis["dhw_eui"],"Benchmark Median":be(bm["dhw_pct"]),
-         "Difference":f"{round(kpis['dhw_eui']-be(bm['dhw_pct']),1):+}","QA Status":bs(kpis["dhw_eui"],bm["dhw_pct"])},
+         "Difference":pdiff(kpis["dhw_eui"], be(bm["dhw_pct"])),"QA Status":bs(kpis["dhw_eui"],bm["dhw_pct"])},
         {"End Use":"Receptacle EUI (kWh/m²·yr)","Your Model":kpis.get("recept_eui",0),"Benchmark Median":be(bm["recept_pct"]),
-         "Difference":f"{round(kpis.get('recept_eui',0)-be(bm['recept_pct']),1):+}","QA Status":bs(kpis.get("recept_eui",0),bm["recept_pct"])},
+         "Difference":pdiff(kpis.get("recept_eui",0), be(bm["recept_pct"])),"QA Status":bs(kpis.get("recept_eui",0),bm["recept_pct"])},
         {"End Use":"Pumps EUI (kWh/m²·yr)","Your Model":kpis["pumps_eui"],"Benchmark Median":be(bm["pumps_pct"]),
-         "Difference":f"{round(kpis['pumps_eui']-be(bm['pumps_pct']),1):+}","QA Status":bs(kpis["pumps_eui"],bm["pumps_pct"])},
+         "Difference":pdiff(kpis["pumps_eui"], be(bm["pumps_pct"])),"QA Status":bs(kpis["pumps_eui"],bm["pumps_pct"])},
     ]
     if kpis.get("ghgi") is not None:
         rows.append(
             {"End Use":"GHGI (kgCO₂e/m²·yr)","Your Model":kpis["ghgi"],"Benchmark Median":bm["median_ghgi"],
-             "Difference":f"{round(kpis['ghgi']-bm['median_ghgi'],1):+}",
+             "Difference":pdiff(kpis["ghgi"], bm["median_ghgi"]),
              "QA Status":status_color(kpis["ghgi"],bm["median_ghgi"]*0.85,bm["median_ghgi"],bm["median_ghgi"]*1.15)})
     return rows
 
@@ -1315,16 +1317,19 @@ else:
                              array=[round(v*0.15,1) for v in bm_med],
                              color="#64748b", thickness=1.5, width=5),
             ))
-            # Your model bars
+            # Your model bars, labelled with % difference vs benchmark median
+            pct_labels = [f"{(y-m)/m*100:+.0f}%" if m else "" for y, m in zip(your_eu, bm_med)]
             fig_cmp.add_trace(go.Bar(
                 name="Your Model", x=eu_l2, y=your_eu,
                 marker_color="#0f4c81",
+                text=pct_labels, textposition="outside", textfont=dict(size=11, color="#0f4c81"),
+                cliponaxis=False,
             ))
             fig_cmp.update_layout(
-                barmode="group", template="plotly_white", height=320,
-                title=dict(text="Your Model vs Benchmark Median (error bars = ±15%)", font=dict(size=13,color="#0f4c81")),
+                barmode="group", template="plotly_white", height=340,
+                title=dict(text="Your Model vs Benchmark Median (labels = % vs median, error bars = ±15%)", font=dict(size=13,color="#0f4c81")),
                 yaxis_title="EUI (kWh/m²·yr)",
-                legend=dict(orientation="h", y=-0.25), margin=dict(t=40,b=10)
+                legend=dict(orientation="h", y=-0.25), margin=dict(t=50,b=10)
             )
             st.plotly_chart(fig_cmp, use_container_width=True)
 
@@ -1353,7 +1358,8 @@ else:
                     "End Use":          st.column_config.TextColumn(disabled=True),
                     "Your Model":       st.column_config.NumberColumn(disabled=True),
                     "Benchmark Median": st.column_config.NumberColumn(disabled=True),
-                    "Difference":       st.column_config.TextColumn(disabled=True),
+                    "Difference":       st.column_config.TextColumn("Difference (%)", disabled=True,
+                                            help="Percent difference of your model vs the benchmark median."),
                     "Auto Flag":        st.column_config.TextColumn(
                                             "Auto Flag", disabled=True,
                                             help="Status the tool calculated automatically — kept for audit."),
