@@ -952,12 +952,14 @@ else:
             project_name  = st.text_input("Project Name", placeholder="e.g. New School A")
             building_type = st.selectbox("Building Type", ALL_BUILDING_TYPES)
             city          = st.selectbox("City", CITIES)
-            climate_zone  = st.selectbox("Climate Zone", CLIMATE_ZONES, index=min(3,len(CLIMATE_ZONES)-1))
         with c2:
             software      = st.selectbox("Simulation Software", SOFTWARE_OPTIONS)
             model_type    = st.selectbox("Model Type", MODEL_TYPES)
             phase         = st.selectbox("Project Phase", PROJECT_PHASES, index=3)
-            area_override = st.number_input("Floor Area Override (m²) — 0 = use mapped value", min_value=0.0, step=100.0, format="%.0f")
+
+        # Climate zone is inferred from the benchmark data for the chosen building type + city.
+        zones_avail = sorted(set(k[2] for k in BENCHMARKS if k[0]==building_type and k[1]==city))
+        climate_zone = zones_avail[0] if zones_avail else (CLIMATE_ZONES[0] if CLIMATE_ZONES else "")
 
         # Subtype selector — dynamically shows only subtypes available for chosen building+city+zone
         available_subtypes = sorted(set(
@@ -981,7 +983,7 @@ else:
                 st.session_state.step = 2 if "headers" in st.session_state else 1; st.rerun()
         with cn:
             if st.button("Calculate KPIs & View Results →", type="primary"):
-                kpis   = calculate_kpis(st.session_state.vals, area_override if area_override>0 else None)
+                kpis   = calculate_kpis(st.session_state.vals)
                 bm_key = (building_type, city, climate_zone, subtype)
                 bm     = BENCHMARKS.get(bm_key)
                 flags  = generate_flags(kpis, bm, building_type)
