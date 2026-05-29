@@ -55,6 +55,45 @@ SOFTWARE_OPTIONS = ["IES VE","EnergyPlus","OpenStudio","eQUEST","Manual / Excel 
 DHW_BUILDINGS    = ["School","Office","Hospital","Residential","Community Centre","Library"]
 END_USE_COLORS   = ["#ef4444","#3b82f6","#8b5cf6","#f59e0b","#06b6d4","#10b981","#f97316"]
 
+# ── GHG emission factors (Canada 2026 provincial values) ──────────────────────
+# Natural gas energy content used to convert g CO₂/m³ → kg CO₂/kWh (HHV ≈ 38 MJ/m³).
+NG_KWH_PER_M3 = 10.55
+# Marketable natural-gas CO₂ factor by province/territory, g CO₂/m³ (Table 1.3, 2026).
+NG_CO2_G_PER_M3 = {
+    "British Columbia":1966, "Alberta":1962, "Saskatchewan":1920, "Manitoba":1915,
+    "Ontario":1921, "Quebec":1926, "New Brunswick":1919, "Nova Scotia":1919,
+    "Prince Edward Island":1919, "Newfoundland and Labrador":1919,
+    "Yukon":1966, "Northwest Territories":1966, "Nunavut":1966,
+}
+# Electricity consumption intensity by province/territory, g CO₂e/kWh (Table 5.3, 2026).
+ELEC_CO2E_G_PER_KWH = {
+    "British Columbia":18, "Alberta":438, "Saskatchewan":631, "Manitoba":2.5,
+    "Ontario":59, "Quebec":1.9, "New Brunswick":234, "Nova Scotia":581,
+    "Prince Edward Island":234, "Newfoundland and Labrador":17,
+    "Yukon":74, "Northwest Territories":420, "Nunavut":800,
+}
+# Map the cities used in the tool to their province/territory.
+CITY_PROVINCE = {
+    "Edmonton":"Alberta", "Calgary":"Alberta", "Red Deer":"Alberta", "Lethbridge":"Alberta",
+    "Vancouver":"British Columbia", "Victoria":"British Columbia", "Kelowna":"British Columbia",
+    "Toronto":"Ontario", "Ottawa":"Ontario", "Hamilton":"Ontario", "London":"Ontario",
+    "Winnipeg":"Manitoba", "Regina":"Saskatchewan", "Saskatoon":"Saskatchewan",
+    "Montreal":"Quebec", "Quebec City":"Quebec",
+    "Halifax":"Nova Scotia", "Fredericton":"New Brunswick",
+    "St. John's":"Newfoundland and Labrador", "Charlottetown":"Prince Edward Island",
+    "Whitehorse":"Yukon", "Yellowknife":"Northwest Territories", "Iqaluit":"Nunavut",
+}
+
+def gas_factor_for(city):
+    """Default natural-gas factor (kg CO₂/kWh) for a city, converted from g CO₂/m³."""
+    g = NG_CO2_G_PER_M3.get(CITY_PROVINCE.get(city, ""))
+    return round(g / NG_KWH_PER_M3 / 1000, 4) if g else 0.0
+
+def elec_factor_for(city):
+    """Default electricity factor (kg CO₂e/kWh) for a city."""
+    g = ELEC_CO2E_G_PER_KWH.get(CITY_PROVINCE.get(city, ""))
+    return round(g / 1000, 4) if g is not None else 0.0
+
 AUTO_MAP = {
     # ── Main energy sources ──
     "electricity_kwh":  ["electricity","total electricity","elec","electricity_kwh","electricity (kwh)",
@@ -117,6 +156,10 @@ AUTO_MAP = {
     # ── Process / other ──
     "process_kwh":      ["process","process load","process_kwh","process (kwh)",
                          "process energy","other","other energy","other_kwh"],
+    # ── Other fuels / biomass / district energy (counted in total energy + GHGI) ──
+    "other_fuel_kwh":   ["biomass","biomass_kwh","other fuel","other_fuel","other_fuel_kwh",
+                         "other resource","other resources","district heating","district energy",
+                         "oil","propane","wood","wood pellets","other fuel (kwh)"],
     # ── TEDI — Thermal Energy Demand Intensity (already kWh/m²·yr, NOT divided by area) ──
     "tedi":             ["tedi","tedi (kwh/m2)","tedi_kwh_m2","tedi kwh/m2","tedi (kwh/m2·yr)",
                          "thermal energy demand intensity","thermal demand intensity","tedi_kwh/m2"],
@@ -138,6 +181,7 @@ FIELD_LABELS = {
     "heat_rejection_kwh":"Heat Rejection (kWh/yr)",
     "ext_lighting_kwh":  "Exterior Lighting (kWh/yr)",
     "process_kwh":       "Process / Other (kWh/yr)",
+    "other_fuel_kwh":    "Other Fuel / Biomass (kWh/yr)",
     "tedi":              "TEDI (kWh/m²·yr)",
 }
 
@@ -283,10 +327,11 @@ def calc_percentile(eui, pct_data):
     above = sum(1 for v in sorted(pct_data) if v > eui)
     return round((above / len(pct_data)) * 100)
 
-def calculate_kpis(vals, area_override=None):
+def calculate_kpis(vals, area_override=None, ef_elec=0.0, ef_gas=0.0, ef_other=0.0):
     area    = float(area_override) if area_override else float(vals.get("area_m2") or 1)
     elec    = float(vals.get("electricity_kwh")    or 0)
     gas     = float(vals.get("gas_kwh")            or 0)
+    other_fuel = float(vals.get("other_fuel_kwh")  or 0)   # biomass / district energy / oil etc.
     heat    = float(vals.get("heating_kwh")        or 0)
     cool    = float(vals.get("cooling_kwh")        or 0)
     central_fan  = float(vals.get("central_fan_kwh")  or 0)
@@ -301,14 +346,22 @@ def calculate_kpis(vals, area_override=None):
     ext_ltg = float(vals.get("ext_lighting_kwh")   or 0)
     process = float(vals.get("process_kwh")        or 0)
     tedi    = float(vals.get("tedi")               or 0)   # already kWh/m²·yr — not divided by area
-    total   = elec + gas
+    total   = elec + gas + other_fuel
     def eui(v): return round(v / area, 1) if area else 0
+
+    # GHGI uses user-supplied emission factors (kgCO₂e/kWh). If none are provided,
+    # GHGI is left undefined (None) rather than shown as a misleading value.
+    ef_elec, ef_gas, ef_other = float(ef_elec or 0), float(ef_gas or 0), float(ef_other or 0)
+    factors_on = (ef_elec > 0) or (ef_gas > 0) or (ef_other > 0)
+    ghgi = round((elec*ef_elec + gas*ef_gas + other_fuel*ef_other) / area, 1) if (factors_on and area) else None
+
     return {
         "area": area, "total_energy": total,
         "total_eui":      eui(total),
         "tedi":           round(tedi, 1),
         "elec_eui":       eui(elec),
         "gas_eui":        eui(gas),
+        "other_fuel_eui": eui(other_fuel),
         "heat_eui":       eui(heat),
         "cool_eui":       eui(cool),
         "fan_eui":         eui(fans),
@@ -322,7 +375,7 @@ def calculate_kpis(vals, area_override=None):
         "heat_rej_eui":   eui(heat_rej),
         "ext_ltg_eui":    eui(ext_ltg),
         "process_eui":    eui(process),
-        "ghgi":           round((elec * 0.00015 + gas * 0.00018) * 1000 / area, 1) if area else 0,
+        "ghgi":           ghgi,
     }
 
 def generate_flags(kpis, bm, building_type):
@@ -404,14 +457,15 @@ def generate_flags(kpis, bm, building_type):
             f"Lighting energy ({kpis['ltg_eui']} kWh/m²·yr) is more than 15% above benchmark median "
             f"({round(ltg_med,1)} kWh/m²·yr) — verify LPD values against NECB."))
 
-    # GHGI
-    if kpis["ghgi"] > bm["median_ghgi"] * 1.15:
-        flags.append(("fail","✗",
-            f"GHGI ({kpis['ghgi']} kgCO₂e/m²·yr) is more than 15% above benchmark median "
-            f"({bm['median_ghgi']} kgCO₂e/m²·yr) — review fuel mix and emission factors."))
-    else:
-        flags.append(("pass","✓",
-            f"GHGI ({kpis['ghgi']} kgCO₂e/m²·yr) is within acceptable range (benchmark median: {bm['median_ghgi']})."))
+    # GHGI (only when emission factors were provided)
+    if kpis.get("ghgi") is not None:
+        if kpis["ghgi"] > bm["median_ghgi"] * 1.15:
+            flags.append(("fail","✗",
+                f"GHGI ({kpis['ghgi']} kgCO₂e/m²·yr) is more than 15% above benchmark median "
+                f"({bm['median_ghgi']} kgCO₂e/m²·yr) — review fuel mix and emission factors."))
+        else:
+            flags.append(("pass","✓",
+                f"GHGI ({kpis['ghgi']} kgCO₂e/m²·yr) is within acceptable range (benchmark median: {bm['median_ghgi']})."))
     return flags
 
 def status_color(val, good, median, high):
@@ -452,10 +506,12 @@ def build_comparison_rows(kpis, bm):
          "Difference":f"{round(kpis.get('recept_eui',0)-be(bm['recept_pct']),1):+}","QA Status":bs(kpis.get("recept_eui",0),bm["recept_pct"])},
         {"End Use":"Pumps EUI (kWh/m²·yr)","Your Model":kpis["pumps_eui"],"Benchmark Median":be(bm["pumps_pct"]),
          "Difference":f"{round(kpis['pumps_eui']-be(bm['pumps_pct']),1):+}","QA Status":bs(kpis["pumps_eui"],bm["pumps_pct"])},
-        {"End Use":"GHGI (kgCO₂e/m²·yr)","Your Model":kpis["ghgi"],"Benchmark Median":bm["median_ghgi"],
-         "Difference":f"{round(kpis['ghgi']-bm['median_ghgi'],1):+}",
-         "QA Status":status_color(kpis["ghgi"],bm["median_ghgi"]*0.85,bm["median_ghgi"],bm["median_ghgi"]*1.15)},
     ]
+    if kpis.get("ghgi") is not None:
+        rows.append(
+            {"End Use":"GHGI (kgCO₂e/m²·yr)","Your Model":kpis["ghgi"],"Benchmark Median":bm["median_ghgi"],
+             "Difference":f"{round(kpis['ghgi']-bm['median_ghgi'],1):+}",
+             "QA Status":status_color(kpis["ghgi"],bm["median_ghgi"]*0.85,bm["median_ghgi"],bm["median_ghgi"]*1.15)})
     return rows
 
 def flags_from_comparison(rows, kpis, bm, building_type):
@@ -600,7 +656,7 @@ def build_pdf_report(meta, kpis, bm, flags, pct, comparison_df):
         ["Metric", "Value", "Benchmark median"],
         ["Total EUI (kWh/m2/yr)",  kpis["total_eui"], bm["median_eui"]  if bm else "-"],
         ["TEDI (kWh/m2/yr)",       kpis.get("tedi", 0) or "-", (bm.get("median_tedi") or "-") if bm else "-"],
-        ["GHGI (kgCO2e/m2/yr)",    kpis["ghgi"],      bm["median_ghgi"] if bm else "-"],
+        ["GHGI (kgCO2e/m2/yr)",    kpis.get("ghgi") if kpis.get("ghgi") is not None else "-",      bm["median_ghgi"] if bm else "-"],
         ["Electricity EUI",        kpis["elec_eui"],  "-"],
         ["Gas EUI",                kpis["gas_eui"],   "-"],
         ["Floor area (m2)",        round(kpis["area"]), "-"],
@@ -889,6 +945,8 @@ else:
                 st.markdown("**Energy Sources**")
                 manual["electricity_kwh"]   = st.number_input("Electricity (kWh/yr)",        min_value=0.0, step=1000.0, format="%.0f")
                 manual["gas_kwh"]           = st.number_input("Natural Gas (kWh/yr)",        min_value=0.0, step=1000.0, format="%.0f")
+                manual["other_fuel_kwh"]    = st.number_input("Other Fuel / Biomass (kWh/yr)", min_value=0.0, step=1000.0, format="%.0f",
+                                                              help="Biomass, district energy, oil, propane, etc. Counted in total energy and GHGI.")
                 manual["area_m2"]           = st.number_input("Floor Area (m²)",              min_value=0.0, step=100.0,  format="%.0f")
                 manual["tedi"]              = st.number_input("TEDI (kWh/m²·yr)",             min_value=0.0, step=10.0,   format="%.1f",
                                                               help="Thermal Energy Demand Intensity — enter as an intensity (already per m²).")
@@ -922,7 +980,7 @@ else:
 
         # Group fields into sections for clarity
         sections = {
-            "⚡ Energy Sources": ["electricity_kwh","gas_kwh","area_m2","tedi"],
+            "⚡ Energy Sources": ["electricity_kwh","gas_kwh","other_fuel_kwh","area_m2","tedi"],
             "🔥 HVAC End Uses":  ["heating_kwh","cooling_kwh","central_fan_kwh","local_fan_kwh","exhaust_fan_kwh","pumps_kwh","heat_rejection_kwh"],
             "💡 Other End Uses": ["lighting_kwh","dhw_kwh","receptacle_kwh","ext_lighting_kwh","process_kwh"],
         }
@@ -977,13 +1035,29 @@ else:
             subtype = "General"
             st.warning("No benchmark found for this combination. KPIs will be calculated but no comparison will be shown.")
 
+        province = CITY_PROVINCE.get(city)
+        ef_elec_default = elec_factor_for(city)
+        ef_gas_default  = gas_factor_for(city)
+        prov_note = f" for **{province}**" if province else ""
+        st.markdown(f"**GHG Emission Factors (kgCO₂e/kWh)** — pre-filled from Canada 2026 provincial factors{prov_note}; edit any value to override. Set to 0 to skip GHGI.")
+        ef1, ef2, ef3 = st.columns(3)
+        with ef1:
+            ef_elec = st.number_input("Electricity", min_value=0.0, step=0.001, format="%.4f", value=ef_elec_default,
+                                      help="Default = provincial electricity consumption intensity (Table 5.3, 2026), e.g. Alberta 0.438, BC 0.018, Ontario 0.059 kg CO₂e/kWh. Editable.")
+        with ef2:
+            ef_gas  = st.number_input("Natural Gas", min_value=0.0, step=0.001, format="%.4f", value=ef_gas_default,
+                                      help="Default converted from marketable natural-gas CO₂ (Table 1.3, 2026, g CO₂/m³) using 10.55 kWh/m³ — e.g. Alberta ≈ 0.186 kg CO₂/kWh. Editable.")
+        with ef3:
+            ef_other = st.number_input("Other Resources / Biomass", min_value=0.0, step=0.01, format="%.4f", value=0.0,
+                                       help="No standard default — enter the factor for your other fuel (e.g. propane ≈ 0.23 kg CO₂/kWh).")
+
         cb,cn = st.columns([1,4])
         with cb:
             if st.button("← Back"):
                 st.session_state.step = 2 if "headers" in st.session_state else 1; st.rerun()
         with cn:
             if st.button("Calculate KPIs & View Results →", type="primary"):
-                kpis   = calculate_kpis(st.session_state.vals)
+                kpis   = calculate_kpis(st.session_state.vals, ef_elec=ef_elec, ef_gas=ef_gas, ef_other=ef_other)
                 bm_key = (building_type, city, climate_zone, subtype)
                 bm     = BENCHMARKS.get(bm_key)
                 flags  = generate_flags(kpis, bm, building_type)
@@ -991,7 +1065,8 @@ else:
                 st.session_state.results = {"kpis":kpis,"bm":bm,"flags":flags,"percentile":pct,
                     "meta":{"project_name":project_name,"building_type":building_type,"city":city,
                             "climate_zone":climate_zone,"subtype":subtype,"software":software,
-                            "model_type":model_type,"phase":phase,"date":str(date.today())}}
+                            "model_type":model_type,"phase":phase,"date":str(date.today()),
+                            "ef_elec":ef_elec,"ef_gas":ef_gas,"ef_other":ef_other}}
                 st.session_state.step=4; st.rerun()
 
     elif st.session_state.step == 4 and st.session_state.results:
@@ -1061,11 +1136,14 @@ else:
                 <div style="font-size:12px;color:#94a3b8;margin-top:4px">{tedi_sub}</div>
             </div>''', unsafe_allow_html=True)
         with r1c3:
+            ghgi_val = kpis.get("ghgi")
+            ghgi_sub = ("Benchmark median: " + str(bm["median_ghgi"]) + " kgCO₂e/m²·yr" if bm else "No benchmark") \
+                       if ghgi_val is not None else "Enter emission factors in Step 3"
             st.markdown(f'''<div style="background:#f8fafc;border-radius:10px;padding:14px 16px;border:1px solid #e2e8f0">
                 <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em">GHGI</div>
-                <div style="font-size:28px;font-weight:700;color:#0f4c81;line-height:1.1">{kpis["ghgi"]}</div>
+                <div style="font-size:28px;font-weight:700;color:#0f4c81;line-height:1.1">{ghgi_val if ghgi_val is not None else "—"}</div>
                 <div style="font-size:12px;color:#64748b">kgCO₂e / m²·yr</div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:4px">{"Benchmark median: " + str(bm["median_ghgi"]) + " kgCO₂e/m²·yr" if bm else "No benchmark"}</div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:4px">{ghgi_sub}</div>
             </div>''', unsafe_allow_html=True)
         with r1c4:
             st.markdown(f'''<div style="background:#f8fafc;border-radius:10px;padding:14px 16px;border:1px solid #e2e8f0">
@@ -1098,6 +1176,7 @@ else:
             ("Heat Rejection EUI", kpis.get("heat_rej_eui",0),      "#0ea5e9", None),
             ("Exterior Lighting EUI", kpis.get("ext_ltg_eui",0),    "#eab308", None),
             ("Process / Other EUI",   kpis.get("process_eui",0),    "#64748b", None),
+            ("Other Fuel / Biomass EUI", kpis.get("other_fuel_eui",0), "#84cc16", None),
         ]
         for start in range(0, len(end_use_cards), 5):
             chunk = end_use_cards[start:start+5]
@@ -1284,7 +1363,7 @@ When you add this model to the benchmark database, it contributes to the pool of
 | Building Type | {meta['building_type']} |
 | City | {meta['city']} · Zone {meta['climate_zone']} |
 | Total EUI | **{kpis['total_eui']} kWh/m²·yr** |
-| GHGI | {kpis['ghgi']} kgCO₂e/m²·yr |
+| GHGI | {kpis['ghgi'] if kpis.get('ghgi') is not None else '—'} kgCO₂e/m²·yr |
 | Floor Area | {round(kpis['area']):,} m² |
 | QA/QC | ✅ {pass_count} pass · ⚠️ {warn_count} review |
                     """)
@@ -1319,7 +1398,7 @@ When you add this model to the benchmark database, it contributes to the pool of
                             kpis["dhw_eui"],
                             kpis.get("recept_eui", 0),
                             kpis["pumps_eui"],
-                            kpis["ghgi"],
+                            kpis.get("ghgi") if kpis.get("ghgi") is not None else "",
                             f"{pct}th" if pct else "N/A",
                             f"{pass_count} pass · {warn_count} review · {fail_count} fail",
                             confirm_notes.strip(),
