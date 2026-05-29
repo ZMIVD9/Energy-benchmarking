@@ -1112,13 +1112,16 @@ else:
 
         # ── Add to Benchmark ──
         st.markdown("### 🏛️ Add This Model to Benchmark Database")
-        # Outstanding fails are based on the reviewer's (possibly overridden) QA Status in
-        # the comparison table, so overriding all flagged (🔴) rows to 🟢 clears the block below.
+        # This section reads from the QA Status column. With every row overridden to 🟢
+        # there are no fails and no reviews, so neither the error nor the warning shows.
         if comparison_edited is not None:
             fail_count = int((comparison_edited["QA Status"] == "🔴").sum())
+            warn_count = int(comparison_edited["QA Status"].isin(["🟡", "🟠"]).sum())
+            pass_count = int((comparison_edited["QA Status"] == "🟢").sum())
         else:
             fail_count = sum(1 for f in flags if f[0]=="fail")
-        warn_count = sum(1 for f in flags if f[0]=="warn")
+            warn_count = sum(1 for f in flags if f[0]=="warn")
+            pass_count = sum(1 for f in flags if f[0]=="pass")
 
         if fail_count > 0:
             st.error(f"❌ This model has **{fail_count} unresolved QA/QC fail(s)** (🔴) in the comparison table above. Override them to 🟢 after review — or fix the model — before adding to the benchmark database.")
@@ -1147,7 +1150,7 @@ When you add this model to the benchmark database, it contributes to the pool of
                 fc1, fc2, fc3 = st.columns(3)
                 with fc1:
                     confirm_name    = st.text_input("Project Name",    value=meta["project_name"])
-                    confirm_modeller= st.text_input("Modeller Name",   placeholder="e.g. Vahid ")
+                    confirm_modeller= st.text_input("Modeller Name",   placeholder="e.g. Vahid M.")
                 with fc2:
                     confirm_subtype = st.text_input("Benchmark Subtype", value=meta.get("subtype","General"),
                                                     help="e.g. Boiler + VAV · Medium, Heat Pump + DOAS")
@@ -1162,7 +1165,7 @@ When you add this model to the benchmark database, it contributes to the pool of
 | Total EUI | **{kpis['total_eui']} kWh/m²·yr** |
 | GHGI | {kpis['ghgi']} kgCO₂e/m²·yr |
 | Floor Area | {round(kpis['area']):,} m² |
-| QA/QC | ✅ {sum(1 for f in flags if f[0]=="pass")} pass · ⚠️ {warn_count} review |
+| QA/QC | ✅ {pass_count} pass · ⚠️ {warn_count} review |
                     """)
 
                 submitted = st.form_submit_button("✅ Add to Benchmark Database", type="primary", use_container_width=True)
@@ -1196,7 +1199,7 @@ When you add this model to the benchmark database, it contributes to the pool of
                             kpis["pumps_eui"],
                             kpis["ghgi"],
                             f"{pct}th" if pct else "N/A",
-                            f"{sum(1 for f in flags if f[0]=='pass')} pass · {warn_count} review · {fail_count} fail",
+                            f"{pass_count} pass · {warn_count} review · {fail_count} fail",
                             confirm_notes.strip(),
                         ]
 
