@@ -1084,23 +1084,32 @@ else:
 
         st.markdown("")
 
-        # Row 2 — end-use breakdown
-        r2c1,r2c2,r2c3,r2c4,r2c5 = st.columns(5)
+        # Row 2 — full end-use breakdown (every mapped variable), wrapping into rows of five
         end_use_cards = [
-            ("Heating EUI",      kpis["heat_eui"],                "#ef4444", bm["median_eui"]*bm["heat_pct"]/100   if bm else None),
-            ("Cooling EUI",      kpis["cool_eui"],                "#3b82f6", bm["median_eui"]*bm["cool_pct"]/100   if bm else None),
-            ("Central Fan EUI",  kpis.get("central_fan_eui",0),  "#8b5cf6", bm["median_eui"]*bm["fan_pct"]/100/3 if bm else None),
-            ("Local Fan EUI",    kpis.get("local_fan_eui",0),    "#a78bfa", bm["median_eui"]*bm["fan_pct"]/100/3 if bm else None),
-            ("Exhaust Fan EUI",  kpis.get("exhaust_fan_eui",0),  "#7c3aed", bm["median_eui"]*bm["fan_pct"]/100/3 if bm else None),
+            ("Heating EUI",        kpis["heat_eui"],                "#ef4444", (bm["median_eui"]*bm["heat_pct"]/100)   if bm else None),
+            ("Cooling EUI",        kpis["cool_eui"],                "#3b82f6", (bm["median_eui"]*bm["cool_pct"]/100)   if bm else None),
+            ("Central Fan EUI",    kpis.get("central_fan_eui",0),   "#8b5cf6", (bm["median_eui"]*bm["fan_pct"]/100/3)  if bm else None),
+            ("Local Fan EUI",      kpis.get("local_fan_eui",0),     "#a78bfa", (bm["median_eui"]*bm["fan_pct"]/100/3)  if bm else None),
+            ("Exhaust Fan EUI",    kpis.get("exhaust_fan_eui",0),   "#7c3aed", (bm["median_eui"]*bm["fan_pct"]/100/3)  if bm else None),
+            ("Lighting EUI",       kpis["ltg_eui"],                 "#f59e0b", (bm["median_eui"]*bm["ltg_pct"]/100)    if bm else None),
+            ("DHW EUI",            kpis["dhw_eui"],                 "#06b6d4", (bm["median_eui"]*bm["dhw_pct"]/100)    if bm else None),
+            ("Pumps EUI",          kpis["pumps_eui"],               "#10b981", (bm["median_eui"]*bm["pumps_pct"]/100)  if bm else None),
+            ("Receptacle EUI",     kpis.get("recept_eui",0),        "#f97316", (bm["median_eui"]*bm["recept_pct"]/100) if bm else None),
+            ("Heat Rejection EUI", kpis.get("heat_rej_eui",0),      "#0ea5e9", None),
+            ("Exterior Lighting EUI", kpis.get("ext_ltg_eui",0),    "#eab308", None),
+            ("Process / Other EUI",   kpis.get("process_eui",0),    "#64748b", None),
         ]
-        for col, (label, val, color, bm_val) in zip([r2c1,r2c2,r2c3,r2c4,r2c5], end_use_cards):
-            bm_text = f"Benchmark: {round(bm_val,1)}" if bm_val is not None else ""
-            col.markdown(f'''<div style="background:#f8fafc;border-radius:10px;padding:12px 14px;border:1px solid #e2e8f0;border-top:3px solid {color}">
-                <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em">{label}</div>
-                <div style="font-size:22px;font-weight:700;color:{color};line-height:1.1">{val}</div>
-                <div style="font-size:11px;color:#94a3b8;margin-top:2px">kWh/m²·yr</div>
-                <div style="font-size:11px;color:#94a3b8">{bm_text}</div>
-            </div>''', unsafe_allow_html=True)
+        for start in range(0, len(end_use_cards), 5):
+            chunk = end_use_cards[start:start+5]
+            cols = st.columns(5)
+            for col, (label, val, color, bm_val) in zip(cols, chunk):
+                bm_text = f"Benchmark: {round(bm_val,1)}" if bm_val is not None else ""
+                col.markdown(f'''<div style="background:#f8fafc;border-radius:10px;padding:12px 14px;border:1px solid #e2e8f0;border-top:3px solid {color};margin-bottom:8px">
+                    <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em">{label}</div>
+                    <div style="font-size:22px;font-weight:700;color:{color};line-height:1.1">{val}</div>
+                    <div style="font-size:11px;color:#94a3b8;margin-top:2px">kWh/m²·yr</div>
+                    <div style="font-size:11px;color:#94a3b8">{bm_text}</div>
+                </div>''', unsafe_allow_html=True)
 
         st.divider()
 
@@ -1124,18 +1133,6 @@ else:
                     title=dict(text="Where does your building rank? (lower = better)",font=dict(size=13,color="#0f4c81")),
                     xaxis_title="Percentile rank of similar buildings",yaxis_title="EUI (kWh/m²·yr)",margin=dict(t=45,b=10))
                 st.plotly_chart(fig_pct,use_container_width=True)
-
-        if bm and bm.get("median_tedi") and bm.get("tedi_pct_data") and kpis.get("tedi",0) > 0:
-            sorted_tedi=sorted(bm["tedi_pct_data"])
-            tedi_colors=["#16a34a" if v<=bm["good_tedi"] else "#d97706" if v<=bm["median_tedi"] else "#ea580c" if v<=bm["high_tedi"] else "#dc2626" for v in sorted_tedi]
-            fig_trank=go.Figure(go.Bar(x=[f"{i*10}th" for i in range(1,11)],y=sorted_tedi,marker_color=tedi_colors,
-                hovertemplate="<b>%{x} percentile</b><br>TEDI: %{y} kWh/m²·yr<extra></extra>"))
-            fig_trank.add_hline(y=kpis["tedi"],line_dash="dash",line_color="#0f4c81",line_width=2.5,
-                annotation_text=f"  Your model: {kpis['tedi']}",annotation_font=dict(color="#0f4c81",size=12))
-            fig_trank.update_layout(template="plotly_white",height=320,
-                title=dict(text="Where does your building rank on TEDI? (lower = better)",font=dict(size=13,color="#0f4c81")),
-                xaxis_title="Percentile rank of similar buildings",yaxis_title="TEDI (kWh/m²·yr)",margin=dict(t=45,b=10))
-            st.plotly_chart(fig_trank,use_container_width=True)
 
         if bm:
             eu_l2=["Heating","Cooling","Central Fan","Local Fan","Exhaust Fan","Lighting","DHW","Receptacle","Pumps"]
