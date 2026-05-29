@@ -94,6 +94,40 @@ def elec_factor_for(city):
     g = ELEC_CO2E_G_PER_KWH.get(CITY_PROVINCE.get(city, ""))
     return round(g / 1000, 4) if g is not None else 0.0
 
+def average_benchmarks(bm_list):
+    """Average a list of benchmark dicts into a single aggregated benchmark
+    (used for province-wide views, e.g. all Schools in Alberta)."""
+    n = len(bm_list)
+    def mean(key):
+        vals = [b[key] for b in bm_list if b.get(key) is not None]
+        return round(sum(vals) / len(vals), 1) if vals else 0
+    def mean_pos(key):  # average only non-zero values (0 = not provided, e.g. TEDI)
+        vals = [b[key] for b in bm_list if b.get(key)]
+        return round(sum(vals) / len(vals), 1) if vals else 0
+    def mean_array(key):
+        arrs = [b[key] for b in bm_list if b.get(key)]
+        if not arrs:
+            return []
+        L = min(len(a) for a in arrs)
+        return [round(sum(a[i] for a in arrs) / len(arrs), 1) for i in range(L)]
+    med_eui  = mean("median_eui")
+    med_tedi = mean_pos("median_tedi")
+    return {
+        "median_eui":  med_eui,
+        "good_eui":    round(med_eui * 0.85, 1),
+        "high_eui":    round(med_eui * 1.15, 1),
+        "median_tedi": med_tedi,
+        "good_tedi":   round(med_tedi * 0.85, 1) if med_tedi else 0,
+        "high_tedi":   round(med_tedi * 1.15, 1) if med_tedi else 0,
+        "median_ghgi": mean("median_ghgi"),
+        "heat_pct": mean("heat_pct"), "cool_pct": mean("cool_pct"), "fan_pct": mean("fan_pct"),
+        "ltg_pct": mean("ltg_pct"), "dhw_pct": mean("dhw_pct"), "recept_pct": mean("recept_pct"),
+        "pumps_pct": mean("pumps_pct"),
+        "pct_data":      mean_array("pct_data"),
+        "tedi_pct_data": mean_array("tedi_pct_data"),
+        "subtype": "All", "_n": n,
+    }
+
 AUTO_MAP = {
     # ── Main energy sources ──
     "electricity_kwh":  ["electricity","total electricity","elec","electricity_kwh","electricity (kwh)",
@@ -824,20 +858,38 @@ elif st.session_state.page == "📚 Benchmark Explorer":
     st.markdown("Browse the benchmark database by building type and location — no upload required.")
     st.divider()
 
-    cf1, cf2 = st.columns(2)
-    with cf1: bx_type = st.selectbox("Building Type", ALL_BUILDING_TYPES)
-    with cf2: bx_city = st.selectbox("City", CITIES + ["All cities"])
+    cf1, cf2, cf3 = st.columns(3)
+    with cf1:
+        bx_type = st.selectbox("Building Type", ALL_BUILDING_TYPES)
+    # Provinces that have benchmarks for this building type
+    provs = sorted({CITY_PROVINCE.get(k[1]) for k in BENCHMARKS if k[0]==bx_type and CITY_PROVINCE.get(k[1])})
+    with cf2:
+        bx_prov = st.selectbox("Province", provs if provs else ["—"])
+    # Cities in that province that have benchmarks for this building type
+    cities_in_prov = sorted({k[1] for k in BENCHMARKS if k[0]==bx_type and CITY_PROVINCE.get(k[1])==bx_prov})
+    prov_avg_label = f"All cities — {bx_prov} average"
+    with cf3:
+        bx_city = st.selectbox("City", [prov_avg_label] + cities_in_prov)
 
-    matches = {k:v for k,v in BENCHMARKS.items() if k[0]==bx_type and (bx_city=="All cities" or k[1]==bx_city)}
-
-    if not matches:
-        st.warning(f"No benchmark data found for **{bx_type}** in **{bx_city}**. Try a different combination, or add a new row in your Google Sheet.")
-
-        st.stop()
+    if bx_city == prov_avg_label:
+        prov_bms = [v for k,v in BENCHMARKS.items() if k[0]==bx_type and CITY_PROVINCE.get(k[1])==bx_prov]
+        if not prov_bms:
+            st.warning(f"No benchmark data found for **{bx_type}** in **{bx_prov}**. Try a different combination, or add a new row in your Google Sheet.")
+            st.stop()
+        agg = average_benchmarks(prov_bms)
+        matches = {(bx_type, f"All cities · {bx_prov}", "", "All"): agg}
+        st.info(f"Showing the **average of {agg['_n']} {bx_type} benchmark(s)** across **{bx_prov}**.")
+    else:
+        matches = {k:v for k,v in BENCHMARKS.items() if k[0]==bx_type and k[1]==bx_city}
+        if not matches:
+            st.warning(f"No benchmark data found for **{bx_type}** in **{bx_city}**. Try a different combination, or add a new row in your Google Sheet.")
+            st.stop()
 
     for (btype, bcity, bzone, bsubtype), bm in matches.items():
-        subtype_tag = f" · {bsubtype}" if bsubtype != "General" else ""
-        st.markdown(f"## 🏢 {btype} · {bcity} · Climate Zone {bzone}{subtype_tag}")
+        zone_tag    = f" · Climate Zone {bzone}" if bzone else ""
+        subtype_tag = (" · provincial average" if bsubtype == "All"
+                       else f" · {bsubtype}" if bsubtype != "General" else "")
+        st.markdown(f"## 🏢 {btype} · {bcity}{zone_tag}{subtype_tag}")
         st.markdown(f'<div class="bm-card"><div class="bm-label">Median GHGI</div><div class="bm-value">{bm["median_ghgi"]}</div><div class="bm-sub">kgCO₂e/m²·yr</div></div>', unsafe_allow_html=True)
 
         m1, m2, m3 = st.columns(3)
@@ -867,7 +919,7 @@ elif st.session_state.page == "📚 Benchmark Explorer":
         with cp1:
             pie_l = [l for l,v in zip(eu_labels,med_vals) if v>0]
             pie_v = [v for v in med_vals if v>0]
-            subtype_label = f" ({bsubtype})" if bsubtype != "General" else ""
+            subtype_label = f" ({bsubtype})" if bsubtype not in ("General", "All") else ""
             st.plotly_chart(make_pie(pie_l, pie_v, f"Median End-Use Split — {btype} · {bcity}{subtype_label}"), use_container_width=True)
         with cp2:
             fig_bar = go.Figure()
