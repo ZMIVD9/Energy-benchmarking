@@ -169,6 +169,13 @@ def load_benchmarks():
                 med_tedi = float(row.get("Median TEDI", "") or 0)
             except (TypeError, ValueError):
                 med_tedi = 0.0
+            # Optional TEDI percentile distribution. If a dedicated column isn't provided
+            # but a Median TEDI is, approximate the shape from the EUI distribution scaled
+            # to the TEDI median so the chart still renders.
+            tedi_pct_raw = str(row.get("TEDI Percentile Data (comma separated)", "") or "").strip()
+            tedi_pct_data = [float(x.strip()) for x in tedi_pct_raw.split(",") if x.strip()]
+            if not tedi_pct_data and med_tedi and pct_data and median:
+                tedi_pct_data = [round(v * med_tedi / median, 1) for v in pct_data]
             benchmarks[(btype, city, zone, subtype)] = {
                 "median_eui":  median,
                 "good_eui":    round(median * 0.85, 1),   # −15% of median
@@ -185,6 +192,7 @@ def load_benchmarks():
                 "recept_pct":  float(row["Receptacle %"]),
                 "pumps_pct":   float(row["Pumps %"]),
                 "pct_data":    pct_data,
+                "tedi_pct_data": tedi_pct_data,
                 "subtype":     subtype,
             }
         except Exception:
@@ -838,6 +846,18 @@ elif st.session_state.page == "📚 Benchmark Explorer":
         fig_pct.update_layout(template="plotly_white", height=300, xaxis_title="Percentile", yaxis_title="EUI (kWh/m²·yr)", margin=dict(t=20,b=10))
         st.plotly_chart(fig_pct, use_container_width=True)
 
+        if bm.get("median_tedi") and bm.get("tedi_pct_data"):
+            st.markdown("#### Portfolio Percentile Distribution — TEDI")
+            sorted_tedi = sorted(bm["tedi_pct_data"])
+            tedi_colors = ["#16a34a" if v<=bm["good_tedi"] else "#d97706" if v<=bm["median_tedi"] else "#ea580c" if v<=bm["high_tedi"] else "#dc2626" for v in sorted_tedi]
+            fig_tedi = go.Figure(go.Bar(x=[f"{i*10}th" for i in range(1,11)], y=sorted_tedi, marker_color=tedi_colors,
+                hovertemplate="<b>%{x} percentile</b><br>TEDI: %{y} kWh/m²·yr<extra></extra>"))
+            fig_tedi.add_hline(y=bm["good_tedi"],   line_dash="dot",  line_color="#16a34a", line_width=1.5, annotation_text=f"  Good: {bm['good_tedi']}",   annotation_font_color="#16a34a")
+            fig_tedi.add_hline(y=bm["median_tedi"], line_dash="dash", line_color="#d97706", line_width=1.5, annotation_text=f"  Median: {bm['median_tedi']}", annotation_font_color="#d97706")
+            fig_tedi.add_hline(y=bm["high_tedi"],   line_dash="dot",  line_color="#dc2626", line_width=1.5, annotation_text=f"  High: {bm['high_tedi']}",     annotation_font_color="#dc2626")
+            fig_tedi.update_layout(template="plotly_white", height=300, xaxis_title="Percentile", yaxis_title="TEDI (kWh/m²·yr)", margin=dict(t=20,b=10))
+            st.plotly_chart(fig_tedi, use_container_width=True)
+
         st.divider()
 
 
@@ -1102,6 +1122,18 @@ else:
                     title=dict(text="Where does your building rank? (lower = better)",font=dict(size=13,color="#0f4c81")),
                     xaxis_title="Percentile rank of similar buildings",yaxis_title="EUI (kWh/m²·yr)",margin=dict(t=45,b=10))
                 st.plotly_chart(fig_pct,use_container_width=True)
+
+        if bm and bm.get("median_tedi") and bm.get("tedi_pct_data") and kpis.get("tedi",0) > 0:
+            sorted_tedi=sorted(bm["tedi_pct_data"])
+            tedi_colors=["#16a34a" if v<=bm["good_tedi"] else "#d97706" if v<=bm["median_tedi"] else "#ea580c" if v<=bm["high_tedi"] else "#dc2626" for v in sorted_tedi]
+            fig_trank=go.Figure(go.Bar(x=[f"{i*10}th" for i in range(1,11)],y=sorted_tedi,marker_color=tedi_colors,
+                hovertemplate="<b>%{x} percentile</b><br>TEDI: %{y} kWh/m²·yr<extra></extra>"))
+            fig_trank.add_hline(y=kpis["tedi"],line_dash="dash",line_color="#0f4c81",line_width=2.5,
+                annotation_text=f"  Your model: {kpis['tedi']}",annotation_font=dict(color="#0f4c81",size=12))
+            fig_trank.update_layout(template="plotly_white",height=320,
+                title=dict(text="Where does your building rank on TEDI? (lower = better)",font=dict(size=13,color="#0f4c81")),
+                xaxis_title="Percentile rank of similar buildings",yaxis_title="TEDI (kWh/m²·yr)",margin=dict(t=45,b=10))
+            st.plotly_chart(fig_trank,use_container_width=True)
 
         if bm:
             eu_l2=["Heating","Cooling","Central Fan","Local Fan","Exhaust Fan","Lighting","DHW","Receptacle","Pumps"]
