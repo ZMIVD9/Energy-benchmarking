@@ -117,6 +117,9 @@ AUTO_MAP = {
     # ── Process / other ──
     "process_kwh":      ["process","process load","process_kwh","process (kwh)",
                          "process energy","other","other energy","other_kwh"],
+    # ── TEDI — Thermal Energy Demand Intensity (already kWh/m²·yr, NOT divided by area) ──
+    "tedi":             ["tedi","tedi (kwh/m2)","tedi_kwh_m2","tedi kwh/m2","tedi (kwh/m2·yr)",
+                         "thermal energy demand intensity","thermal demand intensity","tedi_kwh/m2"],
 }
 
 FIELD_LABELS = {
@@ -135,6 +138,7 @@ FIELD_LABELS = {
     "heat_rejection_kwh":"Heat Rejection (kWh/yr)",
     "ext_lighting_kwh":  "Exterior Lighting (kWh/yr)",
     "process_kwh":       "Process / Other (kWh/yr)",
+    "tedi":              "TEDI (kWh/m²·yr)",
 }
 
 # ── Load benchmarks from Google Sheets ────────────────────────────────────────
@@ -161,10 +165,17 @@ def load_benchmarks():
             pct_raw = str(row["Percentile Data (comma separated)"]).strip()
             pct_data = [float(x.strip()) for x in pct_raw.split(",") if x.strip()]
             median = float(row["Median EUI"])
+            try:
+                med_tedi = float(row.get("Median TEDI", "") or 0)
+            except (TypeError, ValueError):
+                med_tedi = 0.0
             benchmarks[(btype, city, zone, subtype)] = {
                 "median_eui":  median,
                 "good_eui":    round(median * 0.85, 1),   # −15% of median
                 "high_eui":    round(median * 1.15, 1),   # +15% of median
+                "median_tedi": med_tedi,
+                "good_tedi":   round(med_tedi * 0.85, 1) if med_tedi else 0,
+                "high_tedi":   round(med_tedi * 1.15, 1) if med_tedi else 0,
                 "median_ghgi": float(row["Median GHGI"]),
                 "heat_pct":    float(row["Heating %"]),
                 "cool_pct":    float(row["Cooling %"]),
@@ -281,11 +292,13 @@ def calculate_kpis(vals, area_override=None):
     heat_rej= float(vals.get("heat_rejection_kwh") or 0)
     ext_ltg = float(vals.get("ext_lighting_kwh")   or 0)
     process = float(vals.get("process_kwh")        or 0)
+    tedi    = float(vals.get("tedi")               or 0)   # already kWh/m²·yr — not divided by area
     total   = elec + gas
     def eui(v): return round(v / area, 1) if area else 0
     return {
         "area": area, "total_energy": total,
         "total_eui":      eui(total),
+        "tedi":           round(tedi, 1),
         "elec_eui":       eui(elec),
         "gas_eui":        eui(gas),
         "heat_eui":       eui(heat),
@@ -399,6 +412,101 @@ def status_color(val, good, median, high):
     if val <= high:   return "🟠"
     return "🔴"
 
+def build_comparison_rows(kpis, bm):
+    """Per-metric comparison rows with the threshold-vs-median QA Status (the Auto Flag)."""
+    def be(pct): return round(bm["median_eui"] * pct / 100, 1)
+    def bs(val, pct):
+        med = bm["median_eui"] * pct / 100
+        return status_color(val, med*0.85, med, med*1.15)
+    rows = [
+        {"End Use":"Total EUI (kWh/m²·yr)","Your Model":kpis["total_eui"],"Benchmark Median":bm["median_eui"],
+         "Difference":f"{round(kpis['total_eui']-bm['median_eui'],1):+}",
+         "QA Status":status_color(kpis["total_eui"],bm["good_eui"],bm["median_eui"],bm["high_eui"])},
+    ]
+    # TEDI sits right next to Total EUI when both a benchmark and a model value are present.
+    if bm.get("median_tedi") and kpis.get("tedi", 0) > 0:
+        rows.append(
+            {"End Use":"TEDI (kWh/m²·yr)","Your Model":kpis["tedi"],"Benchmark Median":bm["median_tedi"],
+             "Difference":f"{round(kpis['tedi']-bm['median_tedi'],1):+}",
+             "QA Status":status_color(kpis["tedi"],bm["good_tedi"],bm["median_tedi"],bm["high_tedi"])})
+    rows += [
+        {"End Use":"Heating EUI (kWh/m²·yr)","Your Model":kpis["heat_eui"],"Benchmark Median":be(bm["heat_pct"]),
+         "Difference":f"{round(kpis['heat_eui']-be(bm['heat_pct']),1):+}","QA Status":bs(kpis["heat_eui"],bm["heat_pct"])},
+        {"End Use":"Cooling EUI (kWh/m²·yr)","Your Model":kpis["cool_eui"],"Benchmark Median":be(bm["cool_pct"]),
+         "Difference":f"{round(kpis['cool_eui']-be(bm['cool_pct']),1):+}","QA Status":bs(kpis["cool_eui"],bm["cool_pct"])},
+        {"End Use":"Fan EUI (kWh/m²·yr)","Your Model":kpis["fan_eui"],"Benchmark Median":be(bm["fan_pct"]),
+         "Difference":f"{round(kpis['fan_eui']-be(bm['fan_pct']),1):+}","QA Status":bs(kpis["fan_eui"],bm["fan_pct"])},
+        {"End Use":"Lighting EUI (kWh/m²·yr)","Your Model":kpis["ltg_eui"],"Benchmark Median":be(bm["ltg_pct"]),
+         "Difference":f"{round(kpis['ltg_eui']-be(bm['ltg_pct']),1):+}","QA Status":bs(kpis["ltg_eui"],bm["ltg_pct"])},
+        {"End Use":"DHW EUI (kWh/m²·yr)","Your Model":kpis["dhw_eui"],"Benchmark Median":be(bm["dhw_pct"]),
+         "Difference":f"{round(kpis['dhw_eui']-be(bm['dhw_pct']),1):+}","QA Status":bs(kpis["dhw_eui"],bm["dhw_pct"])},
+        {"End Use":"Receptacle EUI (kWh/m²·yr)","Your Model":kpis.get("recept_eui",0),"Benchmark Median":be(bm["recept_pct"]),
+         "Difference":f"{round(kpis.get('recept_eui',0)-be(bm['recept_pct']),1):+}","QA Status":bs(kpis.get("recept_eui",0),bm["recept_pct"])},
+        {"End Use":"Pumps EUI (kWh/m²·yr)","Your Model":kpis["pumps_eui"],"Benchmark Median":be(bm["pumps_pct"]),
+         "Difference":f"{round(kpis['pumps_eui']-be(bm['pumps_pct']),1):+}","QA Status":bs(kpis["pumps_eui"],bm["pumps_pct"])},
+        {"End Use":"GHGI (kgCO₂e/m²·yr)","Your Model":kpis["ghgi"],"Benchmark Median":bm["median_ghgi"],
+         "Difference":f"{round(kpis['ghgi']-bm['median_ghgi'],1):+}",
+         "QA Status":status_color(kpis["ghgi"],bm["median_ghgi"]*0.85,bm["median_ghgi"],bm["median_ghgi"]*1.15)},
+    ]
+    return rows
+
+def flags_from_comparison(rows, kpis, bm, building_type):
+    """Build the QA/QC Flags list directly from the Auto Flag column so the two never
+    disagree. Special-cases a missing required system (e.g. DHW = 0), which a pure
+    threshold check would mistakenly read as "low = good"."""
+    LEVEL = {"🟢":"pass", "🟡":"pass", "🟠":"warn", "🔴":"fail"}
+    ICON  = {"pass":"✓", "warn":"⚠", "fail":"✗"}
+    HINT  = {
+        "Total EUI":  "review overall model inputs, schedules and envelope.",
+        "TEDI":       "review envelope, airtightness and ventilation heat recovery.",
+        "Heating":    "review envelope inputs and heating schedules.",
+        "Cooling":    "verify cooling system sizing and controls.",
+        "Fan":        "verify AHU schedules and fan sizing.",
+        "Lighting":   "verify LPD values against NECB.",
+        "DHW":        "review DHW demand and system efficiency.",
+        "Receptacle": "verify plug-load assumptions.",
+        "Pumps":      "verify pump sizing and run hours.",
+        "GHGI":       "review fuel mix and emission factors.",
+    }
+    def hint_for(name):
+        return next((v for k, v in HINT.items() if name.startswith(k)), "")
+
+    flags = []
+    for r in rows:
+        name, status = r["End Use"], r["QA Status"]
+        your, bench, diff = r["Your Model"], r["Benchmark Median"], r["Difference"]
+
+        # Missing required systems — thresholds alone would call a 0 value "good".
+        if name.startswith("DHW") and kpis["dhw_eui"] == 0 and building_type in DHW_BUILDINGS:
+            flags.append(("fail","✗", f"DHW energy is zero for a {building_type} — domestic hot water is typically required."))
+            continue
+        if name.startswith("Cooling") and kpis["cool_eui"] == 0:
+            flags.append(("warn","⚠", "No cooling energy — confirm whether a mechanical cooling system exists."))
+            continue
+        if name.startswith("Total EUI") and kpis["total_eui"] < bm["good_eui"] * 0.6:
+            flags.append(("warn","⚠", f"Total EUI ({kpis['total_eui']} kWh/m²·yr) is unusually low — confirm all end-uses are modelled."))
+            continue
+
+        level = LEVEL.get(status, "warn")
+        if level == "fail":
+            msg = f"{name}: {your} vs benchmark median {bench} ({diff}) — more than 15% above median; {hint_for(name)}"
+        elif level == "warn":
+            msg = f"{name}: {your} vs benchmark median {bench} ({diff}) — near the +15% high threshold; review."
+        else:
+            msg = f"{name}: {your} vs benchmark median {bench} ({diff}) — within the expected range."
+        flags.append((level, ICON[level], msg))
+
+    # TEDI not provided but a TEDI benchmark exists.
+    if bm.get("median_tedi") and kpis.get("tedi", 0) == 0:
+        flags.append(("warn","⚠", "TEDI not provided — add Thermal Energy Demand Intensity to compare against the benchmark."))
+
+    # Cross-check: heating and cooling both above the high threshold.
+    heat_red = any(r["End Use"].startswith("Heating") and r["QA Status"] == "🔴" for r in rows)
+    cool_red = any(r["End Use"].startswith("Cooling") and r["QA Status"] == "🔴" for r in rows)
+    if heat_red and cool_red:
+        flags.append(("warn","⚠", "Both heating and cooling are above the high threshold — possible simultaneous heating/cooling or control issue."))
+    return flags
+
 def make_pie(labels, values, title):
     fig = go.Figure(go.Pie(
         labels=labels, values=values, hole=0.42,
@@ -483,6 +591,7 @@ def build_pdf_report(meta, kpis, bm, flags, pct, comparison_df):
     summ = [
         ["Metric", "Value", "Benchmark median"],
         ["Total EUI (kWh/m2/yr)",  kpis["total_eui"], bm["median_eui"]  if bm else "-"],
+        ["TEDI (kWh/m2/yr)",       kpis.get("tedi", 0) or "-", (bm.get("median_tedi") or "-") if bm else "-"],
         ["GHGI (kgCO2e/m2/yr)",    kpis["ghgi"],      bm["median_ghgi"] if bm else "-"],
         ["Electricity EUI",        kpis["elec_eui"],  "-"],
         ["Gas EUI",                kpis["gas_eui"],   "-"],
@@ -602,6 +711,7 @@ if st.session_state.page == "⚙️ Manage Benchmarks":
                 "Building Type": btype, "City": city, "Zone": zone,
                 "Subtype": subtype,
                 "Median EUI": bm["median_eui"],
+                "Median TEDI": bm.get("median_tedi", 0),
                 "Good (−15%)": bm["good_eui"],
                 "High Flag (+15%)": bm["high_eui"],
                 "GHGI": bm["median_ghgi"],
@@ -664,9 +774,7 @@ elif st.session_state.page == "📚 Benchmark Explorer":
     for (btype, bcity, bzone, bsubtype), bm in matches.items():
         subtype_tag = f" · {bsubtype}" if bsubtype != "General" else ""
         st.markdown(f"## 🏢 {btype} · {bcity} · Climate Zone {bzone}{subtype_tag}")
-        ci1,ci2 = st.columns(2)
-        ci1.markdown(f'<div class="bm-card"><div class="bm-label">Median GHGI</div><div class="bm-value">{bm["median_ghgi"]}</div><div class="bm-sub">kgCO₂e/m²·yr</div></div>', unsafe_allow_html=True)
-        ci2.markdown(f'<div class="bm-card"><div class="bm-label">Total Benchmark Records</div><div class="bm-value" style="font-size:15px">{len(BENCHMARKS)}</div><div class="bm-sub">in database</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="bm-card"><div class="bm-label">Median GHGI</div><div class="bm-value">{bm["median_ghgi"]}</div><div class="bm-sub">kgCO₂e/m²·yr</div></div>', unsafe_allow_html=True)
 
         m1, m2, m3 = st.columns(3)
         m1.metric("📊 Median EUI",          f"{bm['median_eui']} kWh/m²·yr",
@@ -675,6 +783,15 @@ elif st.session_state.page == "📚 Benchmark Explorer":
                   help="15% below median — used as the pass threshold in QA/QC.")
         m3.metric("🔴 High Flag (+15%)",     f"{bm['high_eui']} kWh/m²·yr",
                   help="15% above median — used as the fail threshold in QA/QC.")
+
+        if bm.get("median_tedi"):
+            t1, t2, t3 = st.columns(3)
+            t1.metric("🔥 Median TEDI",          f"{bm['median_tedi']} kWh/m²·yr",
+                      help="Thermal Energy Demand Intensity — heating + ventilation demand per m². As important as EUI.")
+            t2.metric("🟢 Good Practice (−15%)", f"{bm['good_tedi']} kWh/m²·yr",
+                      help="15% below median TEDI — pass threshold in QA/QC.")
+            t3.metric("🔴 High Flag (+15%)",     f"{bm['high_tedi']} kWh/m²·yr",
+                      help="15% above median TEDI — fail threshold in QA/QC.")
 
         eu_labels = ["Heating","Cooling","Fans","Lighting","DHW","Receptacle","Pumps"]
         eu_pcts   = [bm["heat_pct"],bm["cool_pct"],bm["fan_pct"],bm["ltg_pct"],bm["dhw_pct"],bm["recept_pct"],bm["pumps_pct"]]
@@ -753,6 +870,8 @@ else:
                 manual["electricity_kwh"]   = st.number_input("Electricity (kWh/yr)",        min_value=0.0, step=1000.0, format="%.0f")
                 manual["gas_kwh"]           = st.number_input("Natural Gas (kWh/yr)",        min_value=0.0, step=1000.0, format="%.0f")
                 manual["area_m2"]           = st.number_input("Floor Area (m²)",              min_value=0.0, step=100.0,  format="%.0f")
+                manual["tedi"]              = st.number_input("TEDI (kWh/m²·yr)",             min_value=0.0, step=10.0,   format="%.1f",
+                                                              help="Thermal Energy Demand Intensity — enter as an intensity (already per m²).")
             with c2:
                 st.markdown("**HVAC End Uses**")
                 manual["heating_kwh"]       = st.number_input("Space Heating (kWh/yr)",      min_value=0.0, step=1000.0, format="%.0f")
@@ -783,7 +902,7 @@ else:
 
         # Group fields into sections for clarity
         sections = {
-            "⚡ Energy Sources": ["electricity_kwh","gas_kwh","area_m2"],
+            "⚡ Energy Sources": ["electricity_kwh","gas_kwh","area_m2","tedi"],
             "🔥 HVAC End Uses":  ["heating_kwh","cooling_kwh","central_fan_kwh","local_fan_kwh","exhaust_fan_kwh","pumps_kwh","heat_rejection_kwh"],
             "💡 Other End Uses": ["lighting_kwh","dhw_kwh","receptacle_kwh","ext_lighting_kwh","process_kwh"],
         }
@@ -856,6 +975,11 @@ else:
     elif st.session_state.step == 4 and st.session_state.results:
         r=st.session_state.results; kpis=r["kpis"]; bm=r["bm"]; meta=r["meta"]; flags=r["flags"]; pct=r["percentile"]
 
+        # Build the per-metric comparison rows once, and derive the QA/QC Flags from the
+        # same Auto Flag statuses so the flag list and the comparison table always agree.
+        comp_rows = build_comparison_rows(kpis, bm) if bm else None
+        flags = flags_from_comparison(comp_rows, kpis, bm, meta["building_type"]) if bm else flags
+
         # ── Project header banner ──
         fc={"pass":0,"warn":0,"fail":0}
         for f in flags: fc[f[0]]=fc.get(f[0],0)+1
@@ -889,7 +1013,7 @@ else:
         st.caption("How much energy does this building use per square metre per year?")
 
         # Row 1 — main totals
-        r1c1,r1c2,r1c3,r1c4 = st.columns(4)
+        r1c1,r1c2,r1c3,r1c4,r1c5 = st.columns(5)
         with r1c1:
             delta_eui = f"Benchmark median: {bm['median_eui']} kWh/m²·yr (±15% = {bm['good_eui']}–{bm['high_eui']})" if bm else "No benchmark"
             color_eui = "#f0fdf4" if bm and kpis["total_eui"]<=bm["good_eui"] else "#fef2f2" if bm and kpis["total_eui"]>bm["high_eui"] else "#fffbeb"
@@ -900,20 +1024,35 @@ else:
                 <div style="font-size:12px;color:#94a3b8;margin-top:4px">{delta_eui}</div>
             </div>''', unsafe_allow_html=True)
         with r1c2:
+            has_tedi_bm = bool(bm and bm.get("median_tedi"))
+            tedi_val = kpis.get("tedi", 0)
+            if has_tedi_bm and tedi_val > 0:
+                color_tedi = "#f0fdf4" if tedi_val<=bm["good_tedi"] else "#fef2f2" if tedi_val>bm["high_tedi"] else "#fffbeb"
+                tedi_sub = f"Benchmark median: {bm['median_tedi']} kWh/m²·yr (±15% = {bm['good_tedi']}–{bm['high_tedi']})"
+            else:
+                color_tedi = "#f8fafc"
+                tedi_sub = "No TEDI benchmark" if not has_tedi_bm else "TEDI not provided"
+            st.markdown(f'''<div style="background:{color_tedi};border-radius:10px;padding:14px 16px;border:1px solid #e2e8f0">
+                <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em">TEDI</div>
+                <div style="font-size:28px;font-weight:700;color:#0f4c81;line-height:1.1">{tedi_val if tedi_val>0 else "—"}</div>
+                <div style="font-size:12px;color:#64748b">kWh/m²·yr</div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:4px">{tedi_sub}</div>
+            </div>''', unsafe_allow_html=True)
+        with r1c3:
             st.markdown(f'''<div style="background:#f8fafc;border-radius:10px;padding:14px 16px;border:1px solid #e2e8f0">
                 <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em">GHGI</div>
                 <div style="font-size:28px;font-weight:700;color:#0f4c81;line-height:1.1">{kpis["ghgi"]}</div>
                 <div style="font-size:12px;color:#64748b">kgCO₂e / m²·yr</div>
                 <div style="font-size:12px;color:#94a3b8;margin-top:4px">{"Benchmark median: " + str(bm["median_ghgi"]) + " kgCO₂e/m²·yr" if bm else "No benchmark"}</div>
             </div>''', unsafe_allow_html=True)
-        with r1c3:
+        with r1c4:
             st.markdown(f'''<div style="background:#f8fafc;border-radius:10px;padding:14px 16px;border:1px solid #e2e8f0">
                 <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Electricity EUI</div>
                 <div style="font-size:28px;font-weight:700;color:#3b82f6;line-height:1.1">{kpis["elec_eui"]}</div>
                 <div style="font-size:12px;color:#64748b">kWh/m²·yr</div>
                 <div style="font-size:12px;color:#94a3b8;margin-top:4px">Floor area: {round(kpis["area"]):,} m²</div>
             </div>''', unsafe_allow_html=True)
-        with r1c4:
+        with r1c5:
             st.markdown(f'''<div style="background:#f8fafc;border-radius:10px;padding:14px 16px;border:1px solid #e2e8f0">
                 <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Gas EUI</div>
                 <div style="font-size:28px;font-weight:700;color:#ef4444;line-height:1.1">{kpis["gas_eui"]}</div>
@@ -1001,58 +1140,7 @@ else:
             st.markdown("### 📋 Benchmark Comparison")
             st.caption("QA/QC thresholds: 🟢 ≤ −15% of median &nbsp; 🟡 Within ±15% of median &nbsp; 🔴 > +15% of median")
 
-            def bm_eui(pct): return round(bm["median_eui"] * pct / 100, 1)
-            def bm_status(val, pct):
-                med = bm["median_eui"] * pct / 100
-                return status_color(val, med*0.85, med, med*1.15)
-
-            rows=[
-                {"End Use":           "Total EUI (kWh/m²·yr)",
-                 "Your Model":        kpis["total_eui"],
-                 "Benchmark Median":  bm["median_eui"],
-                 "Difference":        f"{round(kpis['total_eui'] - bm['median_eui'], 1):+}",
-                 "QA Status":         status_color(kpis["total_eui"], bm["good_eui"], bm["median_eui"], bm["high_eui"])},
-                {"End Use":           "Heating EUI (kWh/m²·yr)",
-                 "Your Model":        kpis["heat_eui"],
-                 "Benchmark Median":  bm_eui(bm["heat_pct"]),
-                 "Difference":        f"{round(kpis['heat_eui'] - bm_eui(bm['heat_pct']), 1):+}",
-                 "QA Status":         bm_status(kpis["heat_eui"], bm["heat_pct"])},
-                {"End Use":           "Cooling EUI (kWh/m²·yr)",
-                 "Your Model":        kpis["cool_eui"],
-                 "Benchmark Median":  bm_eui(bm["cool_pct"]),
-                 "Difference":        f"{round(kpis['cool_eui'] - bm_eui(bm['cool_pct']), 1):+}",
-                 "QA Status":         bm_status(kpis["cool_eui"], bm["cool_pct"])},
-                {"End Use":           "Fan EUI (kWh/m²·yr)",
-                 "Your Model":        kpis["fan_eui"],
-                 "Benchmark Median":  bm_eui(bm["fan_pct"]),
-                 "Difference":        f"{round(kpis['fan_eui'] - bm_eui(bm['fan_pct']), 1):+}",
-                 "QA Status":         bm_status(kpis["fan_eui"], bm["fan_pct"])},
-                {"End Use":           "Lighting EUI (kWh/m²·yr)",
-                 "Your Model":        kpis["ltg_eui"],
-                 "Benchmark Median":  bm_eui(bm["ltg_pct"]),
-                 "Difference":        f"{round(kpis['ltg_eui'] - bm_eui(bm['ltg_pct']), 1):+}",
-                 "QA Status":         bm_status(kpis["ltg_eui"], bm["ltg_pct"])},
-                {"End Use":           "DHW EUI (kWh/m²·yr)",
-                 "Your Model":        kpis["dhw_eui"],
-                 "Benchmark Median":  bm_eui(bm["dhw_pct"]),
-                 "Difference":        f"{round(kpis['dhw_eui'] - bm_eui(bm['dhw_pct']), 1):+}",
-                 "QA Status":         bm_status(kpis["dhw_eui"], bm["dhw_pct"])},
-                {"End Use":           "Receptacle EUI (kWh/m²·yr)",
-                 "Your Model":        kpis.get("recept_eui", 0),
-                 "Benchmark Median":  bm_eui(bm["recept_pct"]),
-                 "Difference":        f"{round(kpis.get('recept_eui',0) - bm_eui(bm['recept_pct']), 1):+}",
-                 "QA Status":         bm_status(kpis.get("recept_eui",0), bm["recept_pct"])},
-                {"End Use":           "Pumps EUI (kWh/m²·yr)",
-                 "Your Model":        kpis["pumps_eui"],
-                 "Benchmark Median":  bm_eui(bm["pumps_pct"]),
-                 "Difference":        f"{round(kpis['pumps_eui'] - bm_eui(bm['pumps_pct']), 1):+}",
-                 "QA Status":         bm_status(kpis["pumps_eui"], bm["pumps_pct"])},
-                {"End Use":           "GHGI (kgCO₂e/m²·yr)",
-                 "Your Model":        kpis["ghgi"],
-                 "Benchmark Median":  bm["median_ghgi"],
-                 "Difference":        f"{round(kpis['ghgi'] - bm['median_ghgi'], 1):+}",
-                 "QA Status":         status_color(kpis["ghgi"], bm["median_ghgi"]*0.85, bm["median_ghgi"], bm["median_ghgi"]*1.15)},
-            ]
+            rows = comp_rows   # built once at the top of Step 4 (same statuses drive the QA/QC Flags)
 
             # Editable comparison: reviewer can override the QA Status and add a Comment.
             # "Auto Flag" preserves the tool's original computed status for audit.
@@ -1087,7 +1175,7 @@ else:
 
         # ── Section 4: QA/QC Flags ──
         st.markdown("### 🚩 QA/QC Flags")
-        st.caption("Automated checks comparing your model against benchmark thresholds.")
+        st.caption("Each flag mirrors the Auto Flag column above (your model vs benchmark median).")
         for level,icon,msg in flags:
             st.markdown(f'<div class="flag-{level}"><b>{icon}</b> {msg}</div>',unsafe_allow_html=True)
 
@@ -1188,6 +1276,7 @@ When you add this model to the benchmark database, it contributes to the pool of
                             meta["date"],
                             round(kpis["area"]),
                             kpis["total_eui"],
+                            kpis.get("tedi", 0),
                             kpis["elec_eui"],
                             kpis["gas_eui"],
                             kpis["heat_eui"],
@@ -1213,7 +1302,7 @@ When you add this model to the benchmark database, it contributes to the pool of
                             st.warning(f"⚠️ Could not write to Google Sheets automatically: {msg}")
                             st.markdown("**Please manually copy this row into the 'Project Results' sheet in Google Sheets:**")
                             headers_pr = ["Project Name","Modeller","Building Type","City","Climate Zone","Subtype",
-                                          "Software","Model Type","Phase","Date","Area (m²)","Total EUI","Elec EUI",
+                                          "Software","Model Type","Phase","Date","Area (m²)","Total EUI","TEDI","Elec EUI",
                                           "Gas EUI","Heating EUI","Cooling EUI","Fan EUI","Lighting EUI","DHW EUI",
                                           "Receptacle EUI","Pumps EUI","GHGI","Percentile","QA Flags","Notes"]
                             st.dataframe(pd.DataFrame([dict(zip(headers_pr, project_row))]),
