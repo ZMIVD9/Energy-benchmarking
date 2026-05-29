@@ -84,14 +84,24 @@ CITY_PROVINCE = {
     "Whitehorse":"Yukon", "Yellowknife":"Northwest Territories", "Iqaluit":"Nunavut",
 }
 
+def province_of_city(city):
+    """Province for a city: prefer the sheet's Province column, fall back to the built-in map."""
+    try:
+        for (bt, c, z, sub), v in BENCHMARKS.items():
+            if c == city and v.get("province"):
+                return v["province"]
+    except NameError:
+        pass
+    return CITY_PROVINCE.get(city)
+
 def gas_factor_for(city):
     """Default natural-gas factor (kg CO₂/kWh) for a city, converted from g CO₂/m³."""
-    g = NG_CO2_G_PER_M3.get(CITY_PROVINCE.get(city, ""))
+    g = NG_CO2_G_PER_M3.get(province_of_city(city) or "")
     return round(g / NG_KWH_PER_M3 / 1000, 4) if g else 0.0
 
 def elec_factor_for(city):
     """Default electricity factor (kg CO₂e/kWh) for a city."""
-    g = ELEC_CO2E_G_PER_KWH.get(CITY_PROVINCE.get(city, ""))
+    g = ELEC_CO2E_G_PER_KWH.get(province_of_city(city) or "")
     return round(g / 1000, 4) if g is not None else 0.0
 
 def average_benchmarks(bm_list):
@@ -238,6 +248,9 @@ def load_benchmarks():
             btype   = str(row["Building Type"]).strip()
             city    = str(row["City"]).strip()
             zone    = str(row["Climate Zone"]).strip()
+            # Province from the sheet (accepts the common "Provience" misspelling);
+            # falls back to the built-in city→province map only if the column is blank.
+            province = str(row.get("Province", row.get("Provience", "")) or "").strip() or CITY_PROVINCE.get(city, "")
             # Subtype is optional — falls back to "General" if column missing or empty
             subtype = str(row.get("Subtype", "") or "").strip() or "General"
             pct_raw = str(row["Percentile Data (comma separated)"]).strip()
@@ -272,6 +285,7 @@ def load_benchmarks():
                 "pct_data":    pct_data,
                 "tedi_pct_data": tedi_pct_data,
                 "subtype":     subtype,
+                "province":    province,
             }
         except Exception:
             continue
@@ -806,7 +820,7 @@ if st.session_state.page == "⚙️ Manage Benchmarks":
         rows = []
         for (btype, city, zone, subtype), bm in BENCHMARKS.items():
             rows.append({
-                "Building Type": btype, "City": city, "Zone": zone,
+                "Building Type": btype, "Province": bm.get("province",""), "City": city, "Zone": zone,
                 "Subtype": subtype,
                 "Median EUI": bm["median_eui"],
                 "Median TEDI": bm.get("median_tedi", 0),
@@ -861,18 +875,18 @@ elif st.session_state.page == "📚 Benchmark Explorer":
     cf1, cf2, cf3 = st.columns(3)
     with cf1:
         bx_type = st.selectbox("Building Type", ALL_BUILDING_TYPES)
-    # Provinces that have benchmarks for this building type
-    provs = sorted({CITY_PROVINCE.get(k[1]) for k in BENCHMARKS if k[0]==bx_type and CITY_PROVINCE.get(k[1])})
+    # Provinces that have benchmarks for this building type (read from the sheet)
+    provs = sorted({v["province"] for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")})
     with cf2:
         bx_prov = st.selectbox("Province", provs if provs else ["—"])
     # Cities in that province that have benchmarks for this building type
-    cities_in_prov = sorted({k[1] for k in BENCHMARKS if k[0]==bx_type and CITY_PROVINCE.get(k[1])==bx_prov})
+    cities_in_prov = sorted({k[1] for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")==bx_prov})
     prov_avg_label = f"All cities — {bx_prov} average"
     with cf3:
         bx_city = st.selectbox("City", [prov_avg_label] + cities_in_prov)
 
     if bx_city == prov_avg_label:
-        prov_bms = [v for k,v in BENCHMARKS.items() if k[0]==bx_type and CITY_PROVINCE.get(k[1])==bx_prov]
+        prov_bms = [v for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")==bx_prov]
         if not prov_bms:
             st.warning(f"No benchmark data found for **{bx_type}** in **{bx_prov}**. Try a different combination, or add a new row in your Google Sheet.")
             st.stop()
@@ -1089,7 +1103,7 @@ else:
             subtype = "General"
             st.warning("No benchmark found for this combination. KPIs will be calculated but no comparison will be shown.")
 
-        province = CITY_PROVINCE.get(city)
+        province = province_of_city(city)
         # Dropdown options: province/fuel → factor (kg CO₂e/kWh), shown with the value beside the name.
         elec_opts  = {p: round(g/1000, 4)              for p, g in ELEC_CO2E_G_PER_KWH.items()}
         gas_opts   = {p: round(g/NG_KWH_PER_M3/1000,4) for p, g in NG_CO2_G_PER_M3.items()}
