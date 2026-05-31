@@ -207,6 +207,10 @@ AUTO_MAP = {
     # ── TEDI — Thermal Energy Demand Intensity (already kWh/m²·yr, NOT divided by area) ──
     "tedi":             ["tedi","tedi (kwh/m2)","tedi_kwh_m2","tedi kwh/m2","tedi (kwh/m2·yr)",
                          "thermal energy demand intensity","thermal demand intensity","tedi_kwh/m2"],
+    # ── Unmet (out-of-range comfort) hours — counts, NOT divided by area ──
+    "unmet_hours_heating": ["unmet_hours_heating","unmet hours heating","heating unmet hours","unmet heating hours"],
+    "unmet_hours_cooling": ["unmet_hours_cooling","unmet hours cooling","cooling unmet hours","unmet cooling hours"],
+    "unmet_hours_total":   ["unmet_hours_total","unmet hours total","total unmet hours","unmet hours","unmet_hours"],
 }
 
 FIELD_LABELS = {
@@ -227,6 +231,9 @@ FIELD_LABELS = {
     "process_kwh":       "Process / Other (kWh/yr)",
     "other_fuel_kwh":    "Other Fuel / Biomass (kWh/yr)",
     "tedi":              "TEDI (kWh/m²·yr)",
+    "unmet_hours_heating": "Unmet Hours — Heating",
+    "unmet_hours_cooling": "Unmet Hours — Cooling",
+    "unmet_hours_total":   "Unmet Hours — Total",
 }
 
 # ── Load benchmarks from Google Sheets ────────────────────────────────────────
@@ -394,6 +401,10 @@ def calculate_kpis(vals, area_override=None, ef_elec=0.0, ef_gas=0.0, ef_other=0
     ext_ltg = float(vals.get("ext_lighting_kwh")   or 0)
     process = float(vals.get("process_kwh")        or 0)
     tedi    = float(vals.get("tedi")               or 0)   # already kWh/m²·yr — not divided by area
+    # Unmet (out-of-range comfort) hours — raw counts, NOT divided by area
+    unmet_h = float(vals.get("unmet_hours_heating") or 0)
+    unmet_c = float(vals.get("unmet_hours_cooling") or 0)
+    unmet_t = float(vals.get("unmet_hours_total")   or 0)
     total   = elec + gas + other_fuel
     def eui(v): return round(v / area, 1) if area else 0
 
@@ -407,6 +418,9 @@ def calculate_kpis(vals, area_override=None, ef_elec=0.0, ef_gas=0.0, ef_other=0
         "area": area, "total_energy": total,
         "total_eui":      eui(total),
         "tedi":           round(tedi, 1),
+        "unmet_heating":  int(round(unmet_h)),
+        "unmet_cooling":  int(round(unmet_c)),
+        "unmet_total":    int(round(unmet_t)),
         "elec_eui":       eui(elec),
         "gas_eui":        eui(gas),
         "other_fuel_eui": eui(other_fuel),
@@ -710,6 +724,8 @@ def build_pdf_report(meta, kpis, bm, flags, pct, comparison_df):
         ["Electricity EUI",        kpis["elec_eui"],  "-"],
         ["Gas EUI",                kpis["gas_eui"],   "-"],
         ["Floor area (m2)",        round(kpis["area"]), "-"],
+        ["Unmet hours (total)",    kpis.get("unmet_total", 0), "-"],
+        ["Unmet hours (heating / cooling)", f"{kpis.get('unmet_heating',0)} / {kpis.get('unmet_cooling',0)}", "-"],
     ]
     t = Table(summ, hAlign="LEFT", colWidths=[7*cm, 4*cm, 5*cm])
     t.setStyle(TableStyle([
@@ -1036,6 +1052,11 @@ else:
                 manual["receptacle_kwh"]    = st.number_input("Receptacle / Plug Loads (kWh/yr)", min_value=0.0, step=500.0, format="%.0f")
                 manual["ext_lighting_kwh"]  = st.number_input("Exterior Lighting (kWh/yr)",  min_value=0.0, step=500.0,  format="%.0f")
                 manual["process_kwh"]       = st.number_input("Process / Other (kWh/yr)",    min_value=0.0, step=500.0,  format="%.0f")
+                st.markdown("**Unmet Hours**")
+                manual["unmet_hours_heating"] = st.number_input("Unmet Hours — Heating", min_value=0.0, step=1.0, format="%.0f",
+                                                                help="Count of occupied hours outside the heating setpoint range (not divided by area).")
+                manual["unmet_hours_cooling"] = st.number_input("Unmet Hours — Cooling", min_value=0.0, step=1.0, format="%.0f")
+                manual["unmet_hours_total"]   = st.number_input("Unmet Hours — Total",   min_value=0.0, step=1.0, format="%.0f")
             if st.button("Next: Building Info →", type="primary"):
                 st.session_state.vals = manual; st.session_state.step = 3; st.rerun()
 
@@ -1053,6 +1074,7 @@ else:
             "⚡ Energy Sources": ["electricity_kwh","gas_kwh","other_fuel_kwh","area_m2","tedi"],
             "🔥 HVAC End Uses":  ["heating_kwh","cooling_kwh","central_fan_kwh","local_fan_kwh","exhaust_fan_kwh","pumps_kwh","heat_rejection_kwh"],
             "💡 Other End Uses": ["lighting_kwh","dhw_kwh","receptacle_kwh","ext_lighting_kwh","process_kwh"],
+            "⏱️ Unmet Hours":    ["unmet_hours_heating","unmet_hours_cooling","unmet_hours_total"],
         }
         for section_title, keys in sections.items():
             st.markdown(f"**{section_title}**")
@@ -1250,33 +1272,23 @@ else:
 
         st.markdown("")
 
-        # Row 2 — full end-use breakdown (every mapped variable), wrapping into rows of five
-        end_use_cards = [
-            ("Heating EUI",        kpis["heat_eui"],                "#ef4444", (bm["median_eui"]*bm["heat_pct"]/100)   if bm else None),
-            ("Cooling EUI",        kpis["cool_eui"],                "#3b82f6", (bm["median_eui"]*bm["cool_pct"]/100)   if bm else None),
-            ("Central Fan EUI",    kpis.get("central_fan_eui",0),   "#8b5cf6", (bm["median_eui"]*bm["fan_pct"]/100/3)  if bm else None),
-            ("Local Fan EUI",      kpis.get("local_fan_eui",0),     "#a78bfa", (bm["median_eui"]*bm["fan_pct"]/100/3)  if bm else None),
-            ("Exhaust Fan EUI",    kpis.get("exhaust_fan_eui",0),   "#7c3aed", (bm["median_eui"]*bm["fan_pct"]/100/3)  if bm else None),
-            ("Lighting EUI",       kpis["ltg_eui"],                 "#f59e0b", (bm["median_eui"]*bm["ltg_pct"]/100)    if bm else None),
-            ("DHW EUI",            kpis["dhw_eui"],                 "#06b6d4", (bm["median_eui"]*bm["dhw_pct"]/100)    if bm else None),
-            ("Pumps EUI",          kpis["pumps_eui"],               "#10b981", (bm["median_eui"]*bm["pumps_pct"]/100)  if bm else None),
-            ("Receptacle EUI",     kpis.get("recept_eui",0),        "#f97316", (bm["median_eui"]*bm["recept_pct"]/100) if bm else None),
-            ("Heat Rejection EUI", kpis.get("heat_rej_eui",0),      "#0ea5e9", None),
-            ("Exterior Lighting EUI", kpis.get("ext_ltg_eui",0),    "#eab308", None),
-            ("Process / Other EUI",   kpis.get("process_eui",0),    "#64748b", None),
-            ("Other Fuel / Biomass EUI", kpis.get("other_fuel_eui",0), "#84cc16", None),
-        ]
-        for start in range(0, len(end_use_cards), 5):
-            chunk = end_use_cards[start:start+5]
-            cols = st.columns(5)
-            for col, (label, val, color, bm_val) in zip(cols, chunk):
-                bm_text = f"Benchmark: {round(bm_val,1)}" if bm_val is not None else ""
-                col.markdown(f'''<div style="background:#f8fafc;border-radius:10px;padding:12px 14px;border:1px solid #e2e8f0;border-top:3px solid {color};margin-bottom:8px">
-                    <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em">{label}</div>
-                    <div style="font-size:22px;font-weight:700;color:{color};line-height:1.1">{val}</div>
-                    <div style="font-size:11px;color:#94a3b8;margin-top:2px">kWh/m²·yr</div>
-                    <div style="font-size:11px;color:#94a3b8">{bm_text}</div>
-                </div>''', unsafe_allow_html=True)
+        # Row 2 — featured cards: Other Fuel / Biomass + Unmet Hours.
+        # (The full per-end-use breakdown now lives below the benchmark comparison table.)
+        r2c1, r2c2, _r2c3, _r2c4, _r2c5 = st.columns(5)
+        with r2c1:
+            st.markdown(f'''<div style="background:#f8fafc;border-radius:10px;padding:12px 14px;border:1px solid #e2e8f0;border-top:3px solid #84cc16;margin-bottom:8px">
+                <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Other Fuel / Biomass EUI</div>
+                <div style="font-size:22px;font-weight:700;color:#84cc16;line-height:1.1">{kpis.get("other_fuel_eui",0)}</div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:2px">kWh/m²·yr</div>
+            </div>''', unsafe_allow_html=True)
+        with r2c2:
+            uh_sub = f'Heating: {kpis.get("unmet_heating",0):,} · Cooling: {kpis.get("unmet_cooling",0):,}'
+            st.markdown(f'''<div style="background:#f8fafc;border-radius:10px;padding:12px 14px;border:1px solid #e2e8f0;border-top:3px solid #e11d48;margin-bottom:8px">
+                <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Unmet Hours</div>
+                <div style="font-size:22px;font-weight:700;color:#e11d48;line-height:1.1">{kpis.get("unmet_total",0):,}</div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:2px">hours / yr</div>
+                <div style="font-size:11px;color:#94a3b8">{uh_sub}</div>
+            </div>''', unsafe_allow_html=True)
 
         st.divider()
 
@@ -1374,6 +1386,35 @@ else:
             n_over = int((comparison_edited["QA Status"].values != binary_default.values).sum())
             if n_over:
                 st.caption(f"✏️ {n_over} status value(s) overridden by reviewer.")
+
+        # ── End-Use Breakdown (relocated here, below the benchmark table) ──
+        st.markdown("### 🔍 End-Use Breakdown")
+        st.caption("Per-end-use energy intensity for your model" + (" vs the benchmark median." if bm else "."))
+        end_use_cards = [
+            ("Heating EUI",        kpis["heat_eui"],                "#ef4444", (bm["median_eui"]*bm["heat_pct"]/100)   if bm else None),
+            ("Cooling EUI",        kpis["cool_eui"],                "#3b82f6", (bm["median_eui"]*bm["cool_pct"]/100)   if bm else None),
+            ("Central Fan EUI",    kpis.get("central_fan_eui",0),   "#8b5cf6", (bm["median_eui"]*bm["fan_pct"]/100/3)  if bm else None),
+            ("Local Fan EUI",      kpis.get("local_fan_eui",0),     "#a78bfa", (bm["median_eui"]*bm["fan_pct"]/100/3)  if bm else None),
+            ("Exhaust Fan EUI",    kpis.get("exhaust_fan_eui",0),   "#7c3aed", (bm["median_eui"]*bm["fan_pct"]/100/3)  if bm else None),
+            ("Lighting EUI",       kpis["ltg_eui"],                 "#f59e0b", (bm["median_eui"]*bm["ltg_pct"]/100)    if bm else None),
+            ("DHW EUI",            kpis["dhw_eui"],                 "#06b6d4", (bm["median_eui"]*bm["dhw_pct"]/100)    if bm else None),
+            ("Pumps EUI",          kpis["pumps_eui"],               "#10b981", (bm["median_eui"]*bm["pumps_pct"]/100)  if bm else None),
+            ("Receptacle EUI",     kpis.get("recept_eui",0),        "#f97316", (bm["median_eui"]*bm["recept_pct"]/100) if bm else None),
+            ("Heat Rejection EUI", kpis.get("heat_rej_eui",0),      "#0ea5e9", None),
+            ("Exterior Lighting EUI", kpis.get("ext_ltg_eui",0),    "#eab308", None),
+            ("Process / Other EUI",   kpis.get("process_eui",0),    "#64748b", None),
+        ]
+        for start in range(0, len(end_use_cards), 5):
+            chunk = end_use_cards[start:start+5]
+            cols = st.columns(5)
+            for col, (label, val, color, bm_val) in zip(cols, chunk):
+                bm_text = f"Benchmark: {round(bm_val,1)}" if bm_val is not None else ""
+                col.markdown(f'''<div style="background:#f8fafc;border-radius:10px;padding:12px 14px;border:1px solid #e2e8f0;border-top:3px solid {color};margin-bottom:8px">
+                    <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em">{label}</div>
+                    <div style="font-size:22px;font-weight:700;color:{color};line-height:1.1">{val}</div>
+                    <div style="font-size:11px;color:#94a3b8;margin-top:2px">kWh/m²·yr</div>
+                    <div style="font-size:11px;color:#94a3b8">{bm_text}</div>
+                </div>''', unsafe_allow_html=True)
 
         st.divider()
 
