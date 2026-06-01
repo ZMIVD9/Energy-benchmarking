@@ -344,33 +344,90 @@ def _match_necb_key(name):
             return key
     return None
 
+# Wide-format savings columns on the "NECB Savings" tab → internal end-use keys.
+NECB_WIDE_COLMAP = {
+    "heating %":    ["heating_kwh"],
+    "cooling %":    ["cooling_kwh"],
+    "fan %":        ["central_fan_kwh", "local_fan_kwh", "exhaust_fan_kwh"],
+    "lighting %":   ["lighting_kwh"],
+    "dhw %":        ["dhw_kwh"],
+    "receptacle %": ["receptacle_kwh"],
+    "pumps %":      ["pumps_kwh"],
+}
+
+def _necb_code_from_version(v):
+    s = str(v).strip()
+    if not s or s.lower() == "nan":
+        return None
+    try:    s = str(int(float(s)))   # "2020" / "2020.0" → "2020"
+    except Exception: pass
+    return s if s.upper().startswith("NECB") else f"NECB {s}"
+
 @st.cache_data(ttl=60)
 def load_necb_savings():
-    """Read the NECB tab → {compliance_code: {end_use_key: savings_pct}}.
-    Expects a long-format tab with columns for the code, the end use, and the savings %.
-    Returns {} if the tab can't be read or no recognizable columns are found."""
+    """Read the NECB Savings tab (wide format: one row per building type / city / NECB
+    version, with end-use savings-% columns). Returns {"rows":[...], "codes":[...]}."""
+    empty = {"rows": [], "codes": []}
     try:
         df = pd.read_csv(NECB_SHEET_URL, dtype=str)
     except Exception:
-        return {}
+        return empty
     df.columns = [str(c).strip() for c in df.columns]
     low = {c.lower(): c for c in df.columns}
-    code_col = next((low[c] for c in ["compliance code","code","necb version","version","necb"] if c in low), None)
-    eu_col   = next((low[c] for c in ["end use","end-use","enduse","end use category","category"] if c in low), None)
-    sav_col  = next((low[c] for c in ["benchmark savings %","savings %","savings","benchmark","target savings","target","savings target"] if c in low), None)
-    out = {}
-    if eu_col and sav_col:
-        for _, row in df.iterrows():
-            code = (str(row[code_col]).strip() if code_col else "NECB 2020") or "NECB 2020"
-            key = _match_necb_key(row[eu_col])
-            if not key:
-                continue
+    bt_col   = next((low[c] for c in ["building type","buildingtype","type"] if c in low), None)
+    city_col = next((low[c] for c in ["city"] if c in low), None)
+    prov_col = next((low[c] for c in ["province","provience"] if c in low), None)
+    ver_col  = next((low[c] for c in ["necb version","version","compliance code","code","necb"] if c in low), None)
+    sav_cols = {cl: low[cl] for cl in NECB_WIDE_COLMAP if cl in low}
+    if not sav_cols:
+        return empty
+    rows, codes = [], []
+    for _, r in df.iterrows():
+        code = (_necb_code_from_version(r[ver_col]) if ver_col else None) or "NECB"
+        if code not in codes:
+            codes.append(code)
+        savings = {}
+        for cl, actual in sav_cols.items():
             try:
-                pctv = float(str(row[sav_col]).replace("%", "").strip())
+                pctv = float(str(r[actual]).replace("%", "").strip())
             except Exception:
                 continue
-            out.setdefault(code, {})[key] = pctv
+            for key in NECB_WIDE_COLMAP[cl]:
+                savings[key] = pctv
+        rows.append({
+            "building_type": (str(r[bt_col]).strip()   if bt_col   else ""),
+            "city":          (str(r[city_col]).strip() if city_col else ""),
+            "province":      (str(r[prov_col]).strip() if prov_col else ""),
+            "code":          code,
+            "savings":       savings,
+        })
+    return {"rows": rows, "codes": codes or ["NECB 2020"]}
+
+def _avg_savings(maps):
+    keys = set().union(*[m.keys() for m in maps]) if maps else set()
+    out = {}
+    for k in keys:
+        vals = [m[k] for m in maps if k in m]
+        if vals:
+            out[k] = round(sum(vals) / len(vals), 1)
     return out
+
+def necb_savings_for(necb, building_type, city, code):
+    """Resolve the savings target map for a building type / city / code, with fallbacks:
+    exact (type+city+code) → type+code (avg across cities) → type → any."""
+    rows = necb.get("rows", [])
+    bt = (building_type or "").strip().lower()
+    ct = (city or "").strip().lower()
+    exact = [r["savings"] for r in rows if r["building_type"].lower()==bt and r["city"].lower()==ct and r["code"]==code]
+    if exact:
+        return exact[0]
+    bc = [r["savings"] for r in rows if r["building_type"].lower()==bt and r["code"]==code]
+    if bc:
+        return _avg_savings(bc)
+    b = [r["savings"] for r in rows if r["building_type"].lower()==bt]
+    if b:
+        return _avg_savings(b)
+    return _avg_savings([r["savings"] for r in rows]) if rows else {}
 
 def build_necb_rows(vals, ref_vals, savings_map):
     """Per-end-use proposed-vs-reference savings rows for the NECB QA table."""
@@ -1121,10 +1178,10 @@ else:
 
                 # ── Optional: Reference model + NECB savings check ──
                 st.markdown("---")
-                st.markdown("**Optional — Code Compliance Check**")
+                st.markdown("**Optional — NECB savings check**")
                 st.caption("Add a Reference (baseline) model to compare end-use savings against NECB targets. "
                            "Leave blank to run the tool exactly as before.")
-                necb_codes = sorted(load_necb_savings().keys()) or ["NECB 2020", "NECB 2017"]
+                necb_codes = load_necb_savings().get("codes") or ["NECB 2020", "NECB 2017"]
                 prev_code = st.session_state.get("compliance_code")
                 st.session_state.compliance_code = st.selectbox(
                     "Compliance Code", necb_codes,
@@ -1518,14 +1575,20 @@ else:
         ref_vals = st.session_state.get("ref_vals")
         if ref_vals is not None:
             code = st.session_state.get("compliance_code", "NECB 2020")
+            meta = st.session_state.get("meta", {})
             necb_all = load_necb_savings()
+            sheet_savings = necb_savings_for(necb_all, meta.get("building_type"), meta.get("city"), code)
+            from_sheet = bool(sheet_savings)
+            # Use sheet targets where available; fall back to defaults for any end use the sheet omits.
             savings_map = dict(DEFAULT_NECB_SAVINGS)
-            if necb_all.get(code):
-                savings_map.update(necb_all[code])
+            savings_map.update(sheet_savings)
             necb_rows = build_necb_rows(st.session_state.vals, ref_vals, savings_map)
 
             st.markdown(f"### 🎯 Code Compliance Check — {code}")
-            src_note = "loaded from the NECB sheet" if necb_all.get(code) else "using built-in defaults (NECB tab not found / unreadable)"
+            if from_sheet:
+                src_note = f"targets loaded from the **{NECB_SHEET_NAME}** sheet for {meta.get('building_type','?')} · {meta.get('city','?')}"
+            else:
+                src_note = f"using built-in defaults (no matching row found on the **{NECB_SHEET_NAME}** tab)"
             st.caption(
                 f"Proposed vs Reference savings per end use against NECB targets ({src_note}). "
                 f"**Savings = (Reference − Proposed) / Reference × 100.** "
