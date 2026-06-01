@@ -49,6 +49,11 @@ st.markdown("""
 SHEET_ID = st.secrets.get("SHEET_ID", "YOUR_SHEET_ID_HERE")
 SHEET_NAME = "Benchmarks"
 SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={SHEET_NAME}"
+# NECB end-use savings benchmarks live on their own tab. Set this to match the tab name
+# in your sheet (the screenshot shows "NECB Savings"; the spec calls it "NECB").
+NECB_SHEET_NAME = "NECB Savings"
+NECB_SHEET_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={NECB_SHEET_NAME.replace(' ', '%20')}"
+NECB_TOL = 10  # percentage-point tolerance: savings within 10 pts of (or above) the target → pass
 MODEL_TYPES      = ["Proposed","Baseline","Existing"]
 PROJECT_PHASES   = ["Concept","Schematic Design","Design Development","100% Design","As-Built"]
 SOFTWARE_OPTIONS = ["IES VE","EnergyPlus","OpenStudio","eQUEST","Manual / Excel template","Other"]
@@ -302,6 +307,98 @@ def reload_benchmarks():
     """Clear cache and reload from Google Sheets."""
     load_benchmarks.clear()
     st.rerun()
+
+# ── NECB end-use savings benchmarks (separate tab) ───────────────────────────
+# Maps each internal energy field to the NECB end-use name(s) used on the sheet.
+NECB_ENDUSES = [
+    ("electricity_kwh",    "Electricity",       ["electricity","elec","total electricity"]),
+    ("gas_kwh",            "Natural Gas",       ["natural gas","gas","naturalgas","natural_gas"]),
+    ("lighting_kwh",       "Interior Lighting", ["interior lighting","lighting","lights","ltg","interior_lighting"]),
+    ("heating_kwh",        "Space Heating",     ["space heating","heating","heat","space_heating"]),
+    ("cooling_kwh",        "Space Cooling",     ["space cooling","cooling","cool","space_cooling"]),
+    ("pumps_kwh",          "Pumps",             ["pumps","pump"]),
+    ("heat_rejection_kwh", "Heat Rejection",    ["heat rejection","heat_rejection","heat rej"]),
+    ("central_fan_kwh",    "Central Fan",       ["central fan","interior central fans","central fans","ahu","interior_central_fans"]),
+    ("local_fan_kwh",      "Local Fan",         ["local fan","interior local fans","local fans","interior_local_fans"]),
+    ("exhaust_fan_kwh",    "Exhaust Fan",       ["exhaust fan","exhaust fans","exhaust_fans"]),
+    ("dhw_kwh",            "DHW",               ["dhw","domestic hot water","hot water","service hot water"]),
+    ("receptacle_kwh",     "Receptacle",        ["receptacle","receptacle loads","plug loads","receptacles"]),
+    ("total_kwh",          "Total Energy",      ["total energy","total","total energy use","total_kwh","total kwh"]),
+]
+
+# Fallback savings targets (used if the NECB tab can't be read or is missing a value).
+DEFAULT_NECB_SAVINGS = {
+    "electricity_kwh":30, "gas_kwh":40, "lighting_kwh":76, "heating_kwh":76, "cooling_kwh":30,
+    "pumps_kwh":40, "heat_rejection_kwh":76, "central_fan_kwh":76, "local_fan_kwh":30,
+    "exhaust_fan_kwh":40, "dhw_kwh":76, "receptacle_kwh":76, "total_kwh":40,
+}
+
+def _match_necb_key(name):
+    """Resolve a sheet end-use label to an internal field key."""
+    n = str(name).strip().lower()
+    for key, _label, aliases in NECB_ENDUSES:   # exact match first
+        if n == key or n in aliases:
+            return key
+    for key, _label, aliases in NECB_ENDUSES:   # then substring
+        if any(a in n for a in aliases):
+            return key
+    return None
+
+@st.cache_data(ttl=60)
+def load_necb_savings():
+    """Read the NECB tab → {compliance_code: {end_use_key: savings_pct}}.
+    Expects a long-format tab with columns for the code, the end use, and the savings %.
+    Returns {} if the tab can't be read or no recognizable columns are found."""
+    try:
+        df = pd.read_csv(NECB_SHEET_URL, dtype=str)
+    except Exception:
+        return {}
+    df.columns = [str(c).strip() for c in df.columns]
+    low = {c.lower(): c for c in df.columns}
+    code_col = next((low[c] for c in ["compliance code","code","necb version","version","necb"] if c in low), None)
+    eu_col   = next((low[c] for c in ["end use","end-use","enduse","end use category","category"] if c in low), None)
+    sav_col  = next((low[c] for c in ["benchmark savings %","savings %","savings","benchmark","target savings","target","savings target"] if c in low), None)
+    out = {}
+    if eu_col and sav_col:
+        for _, row in df.iterrows():
+            code = (str(row[code_col]).strip() if code_col else "NECB 2020") or "NECB 2020"
+            key = _match_necb_key(row[eu_col])
+            if not key:
+                continue
+            try:
+                pctv = float(str(row[sav_col]).replace("%", "").strip())
+            except Exception:
+                continue
+            out.setdefault(code, {})[key] = pctv
+    return out
+
+def build_necb_rows(vals, ref_vals, savings_map):
+    """Per-end-use proposed-vs-reference savings rows for the NECB QA table."""
+    def g(d, k):
+        try: return float((d or {}).get(k) or 0)
+        except Exception: return 0.0
+    def total(d): return g(d,"electricity_kwh") + g(d,"gas_kwh") + g(d,"other_fuel_kwh")
+    rows = []
+    for key, label, _aliases in NECB_ENDUSES:
+        prop = total(vals)     if key == "total_kwh" else g(vals, key)
+        ref  = total(ref_vals) if key == "total_kwh" else g(ref_vals, key)
+        bench = savings_map.get(key, DEFAULT_NECB_SAVINGS.get(key))
+        if ref:
+            savings = (ref - prop) / ref * 100
+            sav_txt = f"{savings:+.0f}%"
+            auto = "⚪" if bench is None else ("🟢" if savings >= bench - NECB_TOL else "🔴")
+        else:
+            sav_txt = "n/a"; auto = "⚪"
+        rows.append({
+            "End Use": label,
+            "Proposed": round(prop, 1),
+            "Reference Model": round(ref, 1),
+            "Savings": sav_txt,
+            "Benchmark": (f"{bench:.0f}%" if bench is not None else "—"),
+            "Auto Flag": auto,
+        })
+    return rows
+
 
 def append_to_google_sheet(sheet_name: str, row: list):
     """
@@ -809,7 +906,7 @@ with st.sidebar:
             else:                             st.markdown(f"&nbsp;&nbsp;&nbsp;{s}")
         st.divider()
         if st.button("🔄 Start Over", use_container_width=True):
-            for k in ["step","vals","results","headers","csv_df","mapping","meta"]:
+            for k in ["step","vals","results","headers","csv_df","mapping","meta","ref_csv_df","ref_vals","compliance_code"]:
                 if k in st.session_state: del st.session_state[k]
             st.session_state.step = 1
             st.rerun()
@@ -1015,13 +1112,32 @@ else:
         st.markdown("## Step 1 — Upload Simulation Results or Enter Manually")
         tab_upload, tab_manual = st.tabs(["📂 Upload CSV","⌨️ Enter Manually"])
         with tab_upload:
-            uploaded = st.file_uploader("Choose CSV file", type=["csv"], label_visibility="collapsed")
+            uploaded = st.file_uploader("Proposed Model CSV (required)", type=["csv"], label_visibility="collapsed")
             if uploaded:
                 df = pd.read_csv(uploaded)
                 st.session_state.csv_df  = df
                 st.session_state.headers = list(df.columns)
                 st.success(f"✅ {uploaded.name} — {len(df)} rows, {len(df.columns)} columns")
                 st.dataframe(df.head(3), use_container_width=True)
+
+                # ── Optional: Reference model + NECB savings check ──
+                st.markdown("---")
+                st.markdown("**Optional — NECB savings check**")
+                st.caption("Add a Reference (baseline) model to compare end-use savings against NECB targets. "
+                           "Leave blank to run the tool exactly as before.")
+                necb_codes = sorted(load_necb_savings().keys()) or ["NECB 2020", "NECB 2017"]
+                prev_code = st.session_state.get("compliance_code")
+                st.session_state.compliance_code = st.selectbox(
+                    "Compliance Code", necb_codes,
+                    index=necb_codes.index(prev_code) if prev_code in necb_codes else 0)
+                ref_up = st.file_uploader("Reference Model CSV (optional)", type=["csv"], key="ref_uploader")
+                if ref_up:
+                    rdf = pd.read_csv(ref_up)
+                    st.session_state.ref_csv_df = rdf
+                    st.success(f"✅ Reference: {ref_up.name} — {len(rdf)} rows, {len(rdf.columns)} columns")
+                elif st.session_state.get("ref_csv_df") is not None:
+                    st.caption("✅ Reference model already loaded — re-upload above to replace it.")
+
                 if st.button("Next: Map Columns →", type="primary"):
                     st.session_state.step = 2; st.rerun()
         with tab_manual:
@@ -1058,7 +1174,7 @@ else:
                 manual["unmet_hours_cooling"] = st.number_input("Unmet Hours — Cooling", min_value=0.0, step=1.0, format="%.0f")
                 manual["unmet_hours_total"]   = st.number_input("Unmet Hours — Total",   min_value=0.0, step=1.0, format="%.0f")
             if st.button("Next: Building Info →", type="primary"):
-                st.session_state.vals = manual; st.session_state.step = 3; st.rerun()
+                st.session_state.vals = manual; st.session_state.ref_vals = None; st.session_state.step = 3; st.rerun()
 
     elif st.session_state.step == 2:
         st.markdown("## Step 2 — Map Columns")
@@ -1093,7 +1209,17 @@ else:
             if st.button("Next: Building Info →", type="primary"):
                 df = st.session_state.csv_df
                 vals = {key: pd.to_numeric(df[col], errors="coerce").sum() if col else 0 for key,col in mapping.items()}
-                st.session_state.vals=vals; st.session_state.mapping=mapping; st.session_state.step=3; st.rerun()
+                st.session_state.vals=vals; st.session_state.mapping=mapping
+                # Reference model (optional) — same export format, so reuse the same mapping
+                rdf = st.session_state.get("ref_csv_df")
+                if rdf is not None:
+                    st.session_state.ref_vals = {
+                        key: (pd.to_numeric(rdf[col], errors="coerce").sum() if (col and col in rdf.columns) else 0)
+                        for key, col in mapping.items()
+                    }
+                else:
+                    st.session_state.ref_vals = None
+                st.session_state.step=3; st.rerun()
 
     elif st.session_state.step == 3:
         st.markdown("## Step 3 — Building Information")
@@ -1387,36 +1513,50 @@ else:
             if n_over:
                 st.caption(f"✏️ {n_over} status value(s) overridden by reviewer.")
 
-        # ── End-Use Breakdown (relocated here, below the benchmark table) ──
-        st.markdown("### 🔍 End-Use Breakdown")
-        st.caption("Per-end-use energy intensity for your model" + (" vs the benchmark median." if bm else "."))
-        end_use_cards = [
-            ("Heating EUI",        kpis["heat_eui"],                "#ef4444", (bm["median_eui"]*bm["heat_pct"]/100)   if bm else None),
-            ("Cooling EUI",        kpis["cool_eui"],                "#3b82f6", (bm["median_eui"]*bm["cool_pct"]/100)   if bm else None),
-            ("Central Fan EUI",    kpis.get("central_fan_eui",0),   "#8b5cf6", (bm["median_eui"]*bm["fan_pct"]/100/3)  if bm else None),
-            ("Local Fan EUI",      kpis.get("local_fan_eui",0),     "#a78bfa", (bm["median_eui"]*bm["fan_pct"]/100/3)  if bm else None),
-            ("Exhaust Fan EUI",    kpis.get("exhaust_fan_eui",0),   "#7c3aed", (bm["median_eui"]*bm["fan_pct"]/100/3)  if bm else None),
-            ("Lighting EUI",       kpis["ltg_eui"],                 "#f59e0b", (bm["median_eui"]*bm["ltg_pct"]/100)    if bm else None),
-            ("DHW EUI",            kpis["dhw_eui"],                 "#06b6d4", (bm["median_eui"]*bm["dhw_pct"]/100)    if bm else None),
-            ("Pumps EUI",          kpis["pumps_eui"],               "#10b981", (bm["median_eui"]*bm["pumps_pct"]/100)  if bm else None),
-            ("Receptacle EUI",     kpis.get("recept_eui",0),        "#f97316", (bm["median_eui"]*bm["recept_pct"]/100) if bm else None),
-            ("Heat Rejection EUI", kpis.get("heat_rej_eui",0),      "#0ea5e9", None),
-            ("Exterior Lighting EUI", kpis.get("ext_ltg_eui",0),    "#eab308", None),
-            ("Process / Other EUI",   kpis.get("process_eui",0),    "#64748b", None),
-        ]
-        for start in range(0, len(end_use_cards), 5):
-            chunk = end_use_cards[start:start+5]
-            cols = st.columns(5)
-            for col, (label, val, color, bm_val) in zip(cols, chunk):
-                bm_text = f"Benchmark: {round(bm_val,1)}" if bm_val is not None else ""
-                col.markdown(f'''<div style="background:#f8fafc;border-radius:10px;padding:12px 14px;border:1px solid #e2e8f0;border-top:3px solid {color};margin-bottom:8px">
-                    <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em">{label}</div>
-                    <div style="font-size:22px;font-weight:700;color:{color};line-height:1.1">{val}</div>
-                    <div style="font-size:11px;color:#94a3b8;margin-top:2px">kWh/m²·yr</div>
-                    <div style="font-size:11px;color:#94a3b8">{bm_text}</div>
-                </div>''', unsafe_allow_html=True)
-
         st.divider()
+
+        # ── NECB Savings QA (only when a Reference model was also uploaded) ──
+        ref_vals = st.session_state.get("ref_vals")
+        if ref_vals is not None:
+            code = st.session_state.get("compliance_code", "NECB 2020")
+            necb_all = load_necb_savings()
+            savings_map = dict(DEFAULT_NECB_SAVINGS)
+            if necb_all.get(code):
+                savings_map.update(necb_all[code])
+            necb_rows = build_necb_rows(st.session_state.vals, ref_vals, savings_map)
+
+            st.markdown(f"### 🎯 NECB Savings Check — {code}")
+            src_note = "loaded from the NECB sheet" if necb_all.get(code) else "using built-in defaults (NECB tab not found / unreadable)"
+            st.caption(
+                f"Proposed vs Reference savings per end use against NECB targets ({src_note}). "
+                f"**Savings = (Reference − Proposed) / Reference × 100.** "
+                f"Auto Flag: 🟢 savings within {NECB_TOL} pts of (or above) target · 🔴 below target · ⚪ n/a (reference = 0). "
+                f"Override **QA Status** and add a **Comment** as needed."
+            )
+            necb_df = pd.DataFrame(necb_rows)
+            necb_df["QA Status"] = necb_df["Auto Flag"]
+            necb_df["Comment"]   = ""
+            necb_df = necb_df[["End Use","Proposed","Reference Model","Savings","Benchmark","Auto Flag","QA Status","Comment"]]
+            necb_edited = st.data_editor(
+                necb_df, use_container_width=True, hide_index=True, key="necb_review",
+                column_config={
+                    "End Use":         st.column_config.TextColumn(disabled=True),
+                    "Proposed":        st.column_config.NumberColumn("Proposed (kWh)",        disabled=True, format="%.1f"),
+                    "Reference Model": st.column_config.NumberColumn("Reference Model (kWh)", disabled=True, format="%.1f"),
+                    "Savings":         st.column_config.TextColumn(disabled=True),
+                    "Benchmark":       st.column_config.TextColumn(disabled=True, help="NECB target savings for this end use."),
+                    "Auto Flag":       st.column_config.TextColumn(disabled=True, help="Computed automatically; kept for audit."),
+                    "QA Status":       st.column_config.SelectboxColumn(options=["🟢","🔴","⚪"], required=True, help="Reviewer override (🟢 pass / 🔴 fail / ⚪ n/a)."),
+                    "Comment":         st.column_config.TextColumn(help="Justification or notes for any override."),
+                },
+            )
+            n_g  = int((necb_edited["QA Status"]=="🟢").sum())
+            n_r  = int((necb_edited["QA Status"]=="🔴").sum())
+            n_na = int((necb_edited["QA Status"]=="⚪").sum())
+            n_ov = int((necb_edited["QA Status"].values != necb_df["QA Status"].values).sum())
+            st.caption(f"🟢 {n_g} meet target · 🔴 {n_r} below target · ⚪ {n_na} n/a"
+                       + (f"  ·  ✏️ {n_ov} overridden by reviewer" if n_ov else ""))
+            st.divider()
 
         # ── Section 4: QA/QC Flags ──
         st.markdown("### 🚩 QA/QC Flags")
@@ -1437,7 +1577,7 @@ else:
                 mime="application/pdf", use_container_width=True)
         with cd2:
             if st.button("← Run Another Project",use_container_width=True):
-                for k in ["step","vals","results","headers","csv_df","mapping"]:
+                for k in ["step","vals","results","headers","csv_df","mapping","ref_csv_df","ref_vals","compliance_code"]:
                     if k in st.session_state: del st.session_state[k]
                 st.session_state.step=1; st.rerun()
 
@@ -1470,7 +1610,6 @@ When you add this model to the benchmark database, it contributes to the pool of
 - Project name, building type, city, climate zone, subtype
 - Total EUI, all end-use EUIs, GHGI
 - Floor area, model type, phase, date, software
-- The modeller's name (optional)
 
 **How it updates the benchmark:**
 - Your project's EUI is added to the percentile dataset for that building type/city/subtype
@@ -1483,7 +1622,6 @@ When you add this model to the benchmark database, it contributes to the pool of
                 fc1, fc2, fc3 = st.columns(3)
                 with fc1:
                     confirm_name    = st.text_input("Project Name",    value=meta["project_name"])
-                    confirm_modeller= st.text_input("Modeller Name",   placeholder="e.g. Vahid M.")
                 with fc2:
                     confirm_subtype = st.text_input("Benchmark Subtype", value=meta.get("subtype","General"),
                                                     help="e.g. Boiler + VAV · Medium, Heat Pump + DOAS")
@@ -1510,7 +1648,6 @@ When you add this model to the benchmark database, it contributes to the pool of
                         # Build the row to append to "Project Results" sheet
                         project_row = [
                             confirm_name.strip(),
-                            confirm_modeller.strip(),
                             meta["building_type"],
                             meta["city"],
                             meta["climate_zone"],
@@ -1546,7 +1683,7 @@ When you add this model to the benchmark database, it contributes to the pool of
                             # Fallback — show the data so user can manually add it
                             st.warning(f"⚠️ Could not write to Google Sheets automatically: {msg}")
                             st.markdown("**Please manually copy this row into the 'Project Results' sheet in Google Sheets:**")
-                            headers_pr = ["Project Name","Modeller","Building Type","City","Climate Zone","Subtype",
+                            headers_pr = ["Project Name","Building Type","City","Climate Zone","Subtype",
                                           "Software","Model Type","Phase","Date","Area (m²)","Total EUI","TEDI","Elec EUI",
                                           "Gas EUI","Heating EUI","Cooling EUI","Fan EUI","Lighting EUI","DHW EUI",
                                           "Receptacle EUI","Pumps EUI","GHGI","Percentile","QA Flags","Notes"]
