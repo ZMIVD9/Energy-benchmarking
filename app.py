@@ -1121,7 +1121,7 @@ else:
 
                 # ── Optional: Reference model + NECB savings check ──
                 st.markdown("---")
-                st.markdown("**Optional — Code Compliance check**")
+                st.markdown("**Optional — Code Compliance Check**")
                 st.caption("Add a Reference (baseline) model to compare end-use savings against NECB targets. "
                            "Leave blank to run the tool exactly as before.")
                 necb_codes = sorted(load_necb_savings().keys()) or ["NECB 2020", "NECB 2017"]
