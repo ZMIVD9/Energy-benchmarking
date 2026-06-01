@@ -344,16 +344,40 @@ def _match_necb_key(name):
             return key
     return None
 
-# Wide-format savings columns on the "NECB Savings" tab → internal end-use keys.
-NECB_WIDE_COLMAP = {
-    "heating %":    ["heating_kwh"],
-    "cooling %":    ["cooling_kwh"],
-    "fan %":        ["central_fan_kwh", "local_fan_kwh", "exhaust_fan_kwh"],
-    "lighting %":   ["lighting_kwh"],
-    "dhw %":        ["dhw_kwh"],
-    "receptacle %": ["receptacle_kwh"],
-    "pumps %":      ["pumps_kwh"],
+# NECB Savings tab end-use columns → internal field keys, matched on a normalized
+# (lowercase, alphanumeric-only, trailing "kwh"/"%" stripped) form so it tolerates the
+# per-end-use names (electricity, natural_gas, space_heating, …), the legacy "Heating %"
+# names, and small spelling/casing differences.
+NECB_NORM_ALIASES = {
+    "electricity": ["electricity_kwh"], "elec": ["electricity_kwh"], "totalelectricity": ["electricity_kwh"],
+    "naturalgas": ["gas_kwh"], "gas": ["gas_kwh"], "natgas": ["gas_kwh"],
+    "interiorlighting": ["lighting_kwh"], "lighting": ["lighting_kwh"], "lights": ["lighting_kwh"],
+    "spaceheating": ["heating_kwh"], "heating": ["heating_kwh"], "heat": ["heating_kwh"],
+    "spacecooling": ["cooling_kwh"], "cooling": ["cooling_kwh"], "cool": ["cooling_kwh"],
+    "pumps": ["pumps_kwh"], "pump": ["pumps_kwh"],
+    "heatrejection": ["heat_rejection_kwh"], "heatrej": ["heat_rejection_kwh"],
+    "interiorcentralfans": ["central_fan_kwh"], "interiorcentralfan": ["central_fan_kwh"],
+    "centralfans": ["central_fan_kwh"], "centralfan": ["central_fan_kwh"],
+    "interiorlocalfans": ["local_fan_kwh"], "interiorlocalfan": ["local_fan_kwh"],
+    "localfans": ["local_fan_kwh"], "localfan": ["local_fan_kwh"],
+    "exhaustfans": ["exhaust_fan_kwh"], "exhaustfan": ["exhaust_fan_kwh"],
+    "fan": ["central_fan_kwh", "local_fan_kwh", "exhaust_fan_kwh"],   # legacy combined "Fan %"
+    "fans": ["central_fan_kwh", "local_fan_kwh", "exhaust_fan_kwh"],
+    "dhw": ["dhw_kwh"], "domestichotwater": ["dhw_kwh"], "hotwater": ["dhw_kwh"],
+    "receptacle": ["receptacle_kwh"], "receptacles": ["receptacle_kwh"],
+    "receptacleloads": ["receptacle_kwh"], "plugloads": ["receptacle_kwh"],
+    "total": ["total_kwh"], "totalenergy": ["total_kwh"], "totalkwh": ["total_kwh"],
 }
+
+def _necb_norm(s):
+    n = "".join(ch for ch in str(s).lower() if ch.isalnum())
+    if n.endswith("kwh"):
+        n = n[:-3]
+    return n
+
+def _necb_col_keys(colname):
+    """Internal field key(s) a NECB-sheet end-use column maps to, or None for metadata cols."""
+    return NECB_NORM_ALIASES.get(_necb_norm(colname))
 
 def _necb_code_from_version(v):
     s = str(v).strip()
@@ -366,7 +390,7 @@ def _necb_code_from_version(v):
 @st.cache_data(ttl=60)
 def load_necb_savings():
     """Read the NECB Savings tab (wide format: one row per building type / city / NECB
-    version, with end-use savings-% columns). Returns {"rows":[...], "codes":[...]}."""
+    version, with per-end-use savings columns). Returns {"rows":[...], "codes":[...]}."""
     empty = {"rows": [], "codes": []}
     try:
         df = pd.read_csv(NECB_SHEET_URL, dtype=str)
@@ -378,7 +402,8 @@ def load_necb_savings():
     city_col = next((low[c] for c in ["city"] if c in low), None)
     prov_col = next((low[c] for c in ["province","provience"] if c in low), None)
     ver_col  = next((low[c] for c in ["necb version","version","compliance code","code","necb"] if c in low), None)
-    sav_cols = {cl: low[cl] for cl in NECB_WIDE_COLMAP if cl in low}
+    # Any column that resolves to an end-use key is treated as a savings target.
+    sav_cols = {c: _necb_col_keys(c) for c in df.columns if _necb_col_keys(c)}
     if not sav_cols:
         return empty
     rows, codes = [], []
@@ -387,12 +412,12 @@ def load_necb_savings():
         if code not in codes:
             codes.append(code)
         savings = {}
-        for cl, actual in sav_cols.items():
+        for actual, keys in sav_cols.items():
             try:
-                pctv = float(str(r[actual]).replace("%", "").strip())
+                pctv = float(str(r[actual]).replace("%", "").replace(",", "").strip())
             except Exception:
                 continue
-            for key in NECB_WIDE_COLMAP[cl]:
+            for key in keys:
                 savings[key] = pctv
         rows.append({
             "building_type": (str(r[bt_col]).strip()   if bt_col   else ""),
