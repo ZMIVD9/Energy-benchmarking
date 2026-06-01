@@ -1525,7 +1525,7 @@ else:
                 savings_map.update(necb_all[code])
             necb_rows = build_necb_rows(st.session_state.vals, ref_vals, savings_map)
 
-            st.markdown(f"### 🎯 NECB Savings Check — {code}")
+            st.markdown(f"### 🎯 Code Compliance Check — {code}")
             src_note = "loaded from the NECB sheet" if necb_all.get(code) else "using built-in defaults (NECB tab not found / unreadable)"
             st.caption(
                 f"Proposed vs Reference savings per end use against NECB targets ({src_note}). "
