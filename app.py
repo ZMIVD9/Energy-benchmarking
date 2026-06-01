@@ -1019,7 +1019,6 @@ elif st.session_state.page == "📚 Benchmark Explorer":
         subtype_tag = (" · provincial average" if bsubtype == "All"
                        else f" · {bsubtype}" if bsubtype != "General" else "")
         st.markdown(f"## 🏢 {btype} · {bcity}{zone_tag}{subtype_tag}")
-        st.markdown(f'<div class="bm-card"><div class="bm-label">Median GHGI</div><div class="bm-value">{bm["median_ghgi"]}</div><div class="bm-sub">kgCO₂e/m²·yr</div></div>', unsafe_allow_html=True)
 
         m1, m2, m3 = st.columns(3)
         m1.metric("📊 Median EUI",          f"{bm['median_eui']} kWh/m²·yr",
