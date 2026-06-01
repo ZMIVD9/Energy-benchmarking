@@ -413,9 +413,14 @@ def load_necb_savings():
             codes.append(code)
         savings = {}
         for actual, keys in sav_cols.items():
+            raw = str(r[actual]).replace("%", "").replace(",", "").strip()
+            if raw == "" or raw.lower() == "nan":
+                continue
             try:
-                pctv = float(str(r[actual]).replace("%", "").replace(",", "").strip())
+                pctv = float(raw)
             except Exception:
+                continue
+            if pctv != pctv:   # NaN guard
                 continue
             for key in keys:
                 savings[key] = pctv
@@ -464,7 +469,7 @@ def build_necb_rows(vals, ref_vals, savings_map):
     for key, label, _aliases in NECB_ENDUSES:
         prop = total(vals)     if key == "total_kwh" else g(vals, key)
         ref  = total(ref_vals) if key == "total_kwh" else g(ref_vals, key)
-        bench = savings_map.get(key, DEFAULT_NECB_SAVINGS.get(key))
+        bench = savings_map.get(key)
         if ref:
             savings = (ref - prop) / ref * 100
             sav_txt = f"{savings:+.0f}%"
@@ -1600,13 +1605,11 @@ else:
         ref_vals = st.session_state.get("ref_vals")
         if ref_vals is not None:
             code = st.session_state.get("compliance_code", "NECB 2020")
-            meta = st.session_state.get("meta", {})
             necb_all = load_necb_savings()
             sheet_savings = necb_savings_for(necb_all, meta.get("building_type"), meta.get("city"), code)
             from_sheet = bool(sheet_savings)
-            # Use sheet targets where available; fall back to defaults for any end use the sheet omits.
-            savings_map = dict(DEFAULT_NECB_SAVINGS)
-            savings_map.update(sheet_savings)
+            # Use the sheet's targets exactly (blank cells → no target). Defaults only when no row matches.
+            savings_map = sheet_savings if from_sheet else dict(DEFAULT_NECB_SAVINGS)
             necb_rows = build_necb_rows(st.session_state.vals, ref_vals, savings_map)
 
             st.markdown(f"### 🎯 Code Compliance Check — {code}")
