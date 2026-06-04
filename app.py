@@ -1074,36 +1074,43 @@ elif st.session_state.page == "📚 Benchmark Explorer":
     st.markdown("Browse the benchmark database by building type and location — no upload required.")
     st.divider()
 
-    cf1, cf2, cf3 = st.columns(3)
+    cf1, cf2, cf3, cf4 = st.columns(4)
     with cf1:
         bx_type = st.selectbox("Building Type", ALL_BUILDING_TYPES)
     # Provinces that have benchmarks for this building type (read from the sheet)
     provs = sorted({v["province"] for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")})
     with cf2:
         bx_prov = st.selectbox("Province", provs if provs else ["—"])
-    # Climate zones in that province that have benchmarks for this building type
+    # Climate zones available for this building type + province (no "average" entry —
+    # selecting a zone shows that zone's average by default)
     zones_in_prov = sorted({k[2] for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")==bx_prov and k[2]})
-    zone_avg_label = f"All zones — {bx_prov} average"
     with cf3:
-        bx_zone = st.selectbox("Climate Zone", [zone_avg_label] + zones_in_prov)
+        bx_zone = st.selectbox("Climate Zone", zones_in_prov if zones_in_prov else ["—"])
+    # Optional city refinement within the selected zone
+    cities_in_zone = sorted({k[1] for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")==bx_prov and k[2]==bx_zone})
+    zone_avg_label = f"Climate Zone {bx_zone} average"
+    with cf4:
+        bx_city = st.selectbox("City (optional)", [zone_avg_label] + cities_in_zone,
+                               help="Leave on the zone average, or pick a city to see city-specific data.")
 
-    if bx_zone == zone_avg_label:
-        prov_bms = [v for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")==bx_prov]
-        if not prov_bms:
-            st.warning(f"No benchmark data found for **{bx_type}** in **{bx_prov}**. Try a different combination, or add a new row in your Google Sheet.")
-            st.stop()
-        agg = average_benchmarks(prov_bms)
-        matches = {(bx_type, f"All cities · {bx_prov}", "", "All"): agg}
-        st.info(f"Showing the **average of {agg['_n']} {bx_type} benchmark(s)** across **{bx_prov}**.")
-    else:
-        matches = {k:v for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")==bx_prov and k[2]==bx_zone}
-        if not matches:
+    if bx_city == zone_avg_label:
+        zone_bms = [v for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")==bx_prov and k[2]==bx_zone]
+        if not zone_bms:
             st.warning(f"No benchmark data found for **{bx_type}** in **Climate Zone {bx_zone}, {bx_prov}**. Try a different combination, or add a new row in your Google Sheet.")
             st.stop()
+        agg = average_benchmarks(zone_bms)
+        matches = {(bx_type, f"All cities · {bx_prov}", bx_zone, "All"): agg}
+        st.info(f"Showing the **Climate Zone {bx_zone} average** for {bx_type} in {bx_prov} — average of {agg['_n']} benchmark(s). Select a city above to see city-specific data.")
+    else:
+        matches = {k:v for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")==bx_prov and k[2]==bx_zone and k[1]==bx_city}
+        if not matches:
+            st.warning(f"No benchmark data found for **{bx_type}** in **{bx_city}, Climate Zone {bx_zone}**. Try a different combination, or add a new row in your Google Sheet.")
+            st.stop()
+        st.info(f"Showing **{bx_city}**-specific data for Climate Zone {bx_zone}.")
 
     for (btype, bcity, bzone, bsubtype), bm in matches.items():
         zone_tag    = f" · Climate Zone {bzone}" if bzone else ""
-        subtype_tag = (" · provincial average" if bsubtype == "All"
+        subtype_tag = (" · zone average" if bsubtype == "All"
                        else f" · {bsubtype}" if bsubtype != "General" else "")
         st.markdown(f"## 🏢 {btype} · {bcity}{zone_tag}{subtype_tag}")
 
