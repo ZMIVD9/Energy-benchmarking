@@ -1081,13 +1081,13 @@ elif st.session_state.page == "📚 Benchmark Explorer":
     provs = sorted({v["province"] for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")})
     with cf2:
         bx_prov = st.selectbox("Province", provs if provs else ["—"])
-    # Cities in that province that have benchmarks for this building type
-    cities_in_prov = sorted({k[1] for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")==bx_prov})
-    prov_avg_label = f"All cities — {bx_prov} average"
+    # Climate zones in that province that have benchmarks for this building type
+    zones_in_prov = sorted({k[2] for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")==bx_prov and k[2]})
+    zone_avg_label = f"All zones — {bx_prov} average"
     with cf3:
-        bx_city = st.selectbox("City", [prov_avg_label] + cities_in_prov)
+        bx_zone = st.selectbox("Climate Zone", [zone_avg_label] + zones_in_prov)
 
-    if bx_city == prov_avg_label:
+    if bx_zone == zone_avg_label:
         prov_bms = [v for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")==bx_prov]
         if not prov_bms:
             st.warning(f"No benchmark data found for **{bx_type}** in **{bx_prov}**. Try a different combination, or add a new row in your Google Sheet.")
@@ -1096,9 +1096,9 @@ elif st.session_state.page == "📚 Benchmark Explorer":
         matches = {(bx_type, f"All cities · {bx_prov}", "", "All"): agg}
         st.info(f"Showing the **average of {agg['_n']} {bx_type} benchmark(s)** across **{bx_prov}**.")
     else:
-        matches = {k:v for k,v in BENCHMARKS.items() if k[0]==bx_type and k[1]==bx_city}
+        matches = {k:v for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")==bx_prov and k[2]==bx_zone}
         if not matches:
-            st.warning(f"No benchmark data found for **{bx_type}** in **{bx_city}**. Try a different combination, or add a new row in your Google Sheet.")
+            st.warning(f"No benchmark data found for **{bx_type}** in **Climate Zone {bx_zone}, {bx_prov}**. Try a different combination, or add a new row in your Google Sheet.")
             st.stop()
 
     for (btype, bcity, bzone, bsubtype), bm in matches.items():
