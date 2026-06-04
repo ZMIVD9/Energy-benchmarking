@@ -1099,7 +1099,7 @@ elif st.session_state.page == "📚 Benchmark Explorer":
             st.warning(f"No benchmark data found for **{bx_type}** in **Climate Zone {bx_zone}, {bx_prov}**. Try a different combination, or add a new row in your Google Sheet.")
             st.stop()
         agg = average_benchmarks(zone_bms)
-        matches = {(bx_type, f"All cities · {bx_prov}", bx_zone, "All"): agg}
+        matches = {(bx_type, "", bx_zone, "All"): agg}
         st.info(f"Showing the **Climate Zone {bx_zone} average** for {bx_type} in {bx_prov} — average of {agg['_n']} benchmark(s). Select a city above to see city-specific data.")
     else:
         matches = {k:v for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")==bx_prov and k[2]==bx_zone and k[1]==bx_city}
@@ -1109,10 +1109,11 @@ elif st.session_state.page == "📚 Benchmark Explorer":
         st.info(f"Showing **{bx_city}**-specific data for Climate Zone {bx_zone}.")
 
     for (btype, bcity, bzone, bsubtype), bm in matches.items():
+        city_tag    = f" · {bcity}" if bcity else ""
         zone_tag    = f" · Climate Zone {bzone}" if bzone else ""
-        subtype_tag = (" · zone average" if bsubtype == "All"
+        subtype_tag = (" · average" if bsubtype == "All"
                        else f" · {bsubtype}" if bsubtype != "General" else "")
-        st.markdown(f"## 🏢 {btype} · {bcity}{zone_tag}{subtype_tag}")
+        st.markdown(f"## 🏢 {btype}{city_tag}{zone_tag}{subtype_tag}")
 
         m1, m2, m3 = st.columns(3)
         m1.metric("📊 Median EUI",          f"{bm['median_eui']} kWh/m²·yr",
