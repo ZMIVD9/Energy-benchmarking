@@ -883,7 +883,10 @@ def build_pdf_report(meta, kpis, bm, flags, pct, comparison_df):
     sub = f"{meta['building_type']} · {meta['city']} · Climate Zone {meta['climate_zone']}"
     if meta.get("subtype", "General") not in ("", "General"):
         sub += f" · {meta['subtype']}"
-    sub += f" · {meta['model_type']} · {meta['phase']} · {meta['software']} · {meta['date']}"
+    sub += f" · {meta['model_type']}"
+    if meta.get("phase"):
+        sub += f" · {meta['phase']}"
+    sub += f" · {meta['software']} · {meta['date']}"
     elems.append(para(sub, small))
     elems.append(Spacer(1, 8))
 
@@ -1321,11 +1324,11 @@ else:
         with c1:
             project_name  = st.text_input("Project Name", placeholder="e.g. New School A")
             building_type = st.selectbox("Building Type", ALL_BUILDING_TYPES)
-            city          = st.selectbox("City", CITIES)
         with c2:
             software      = st.selectbox("Simulation Software", SOFTWARE_OPTIONS)
             model_type    = st.selectbox("Model Type", MODEL_TYPES)
-            phase         = st.selectbox("Project Phase", PROJECT_PHASES, index=3)
+            city          = st.selectbox("City", CITIES)
+        phase = ""   # Project Phase removed from the form; kept blank for downstream compatibility
 
         # Climate zone is inferred from the benchmark data for the chosen building type + city.
         zones_avail = sorted(set(k[2] for k in BENCHMARKS if k[0]==building_type and k[1]==city))
@@ -1418,9 +1421,10 @@ else:
         pct_text      = f"&nbsp;&nbsp;|&nbsp;&nbsp; Benchmark percentile: <b>{pct}th</b> (lower = better)" if pct else ""
         flag_text     = f"Pass: {fc['pass']}  &nbsp; Review: {fc['warn']}  &nbsp; Fail: {fc['fail']}"
         subtype_disp  = f" &middot; {meta.get('subtype','')}" if meta.get('subtype','') not in ("","General") else ""
+        phase_disp    = f" &middot; {meta['phase']}" if meta.get('phase') else ""
         info_line     = (f"{meta['building_type']} &middot; {meta['city']} &middot; "
-                         f"Climate Zone {meta['climate_zone']}{subtype_disp} &middot; {meta['model_type']} "
-                         f"&middot; {meta['phase']} &middot; {meta['software']}")
+                         f"Climate Zone {meta['climate_zone']}{subtype_disp} &middot; {meta['model_type']}"
+                         f"{phase_disp} &middot; {meta['software']}")
         banner_html = (
             f'<div style="background:{overall_color};border-left:5px solid {overall_border};'
             f'border-radius:10px;padding:18px 22px;margin-bottom:16px">'
