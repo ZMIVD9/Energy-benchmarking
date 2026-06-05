@@ -880,9 +880,14 @@ def build_pdf_report(meta, kpis, bm, flags, pct, comparison_df):
 
     # Title + metadata line
     elems.append(para(meta["project_name"] or "Project Results", h1))
-    sub = f"{meta['building_type']} · {meta['city']} · Climate Zone {meta['climate_zone']}"
-    if meta.get("subtype", "General") not in ("", "General"):
+    sub = meta['building_type']
+    if meta.get('city'):
+        sub += f" · {meta['city']}"
+    sub += f" · Climate Zone {meta['climate_zone']}"
+    if meta.get("subtype", "General") not in ("", "General", "All"):
         sub += f" · {meta['subtype']}"
+    if not meta.get('city'):
+        sub += " · zone average"
     sub += f" · {meta['model_type']}"
     if meta.get("phase"):
         sub += f" · {meta['phase']}"
@@ -1320,68 +1325,98 @@ else:
 
     elif st.session_state.step == 3:
         st.markdown("## Step 3 — Building Information")
-        c1,c2 = st.columns(2)
-        with c1:
-            project_name  = st.text_input("Project Name", placeholder="e.g. New School A")
-            building_type = st.selectbox("Building Type", ALL_BUILDING_TYPES)
-        with c2:
-            software      = st.selectbox("Simulation Software", SOFTWARE_OPTIONS)
-            model_type    = st.selectbox("Model Type", MODEL_TYPES)
-            city          = st.selectbox("City", CITIES)
+        # ── Required project metadata (kept visible & mandatory) ──
+        m1, m2, m3 = st.columns(3)
+        with m1:
+            project_name = st.text_input("Project Name *", placeholder="e.g. New School A")
+        with m2:
+            software     = st.selectbox("Simulation Software *", SOFTWARE_OPTIONS)
+        with m3:
+            model_type   = st.selectbox("Model Type", MODEL_TYPES)
         phase = ""   # Project Phase removed from the form; kept blank for downstream compatibility
 
-        # Climate zone is inferred from the benchmark data for the chosen building type + city.
-        zones_avail = sorted(set(k[2] for k in BENCHMARKS if k[0]==building_type and k[1]==city))
-        climate_zone = zones_avail[0] if zones_avail else (CLIMATE_ZONES[0] if CLIMATE_ZONES else "")
+        # ── Benchmark selection — identical filtering to the Benchmark Explorer ──
+        st.markdown("**Benchmark to compare against** — same filters as the Benchmark Explorer. "
+                    "Pick a city to compare against that exact benchmark model, or leave the City on the zone average.")
+        b1, b2, b3, b4 = st.columns(4)
+        with b1:
+            building_type = st.selectbox("Building Type", ALL_BUILDING_TYPES)
+        provs = sorted({v["province"] for k,v in BENCHMARKS.items() if k[0]==building_type and v.get("province")})
+        with b2:
+            province = st.selectbox("Province", provs if provs else ["—"])
+        zones_avail = sorted({k[2] for k,v in BENCHMARKS.items()
+                              if k[0]==building_type and v.get("province")==province and k[2]})
+        with b3:
+            climate_zone = st.selectbox("Climate Zone", zones_avail if zones_avail else ["—"])
+        cities_in_zone = sorted({k[1] for k,v in BENCHMARKS.items()
+                                 if k[0]==building_type and v.get("province")==province and k[2]==climate_zone})
+        zone_avg_label = f"Climate Zone {climate_zone} average"
+        with b4:
+            city_sel = st.selectbox("City (optional)", [zone_avg_label] + cities_in_zone,
+                                    help="Leave on the zone average, or pick a city to compare against that exact benchmark model.")
 
-        # Subtype selector — dynamically shows only subtypes available for chosen building+city+zone
-        available_subtypes = sorted(set(
-            k[3] for k in BENCHMARKS
-            if k[0]==building_type and k[1]==city and k[2]==climate_zone
-        ))
-        if len(available_subtypes) > 1:
-            st.markdown("**Multiple benchmarks available for this building type and city — select the one that best matches your project:**")
-            subtype = st.selectbox("Benchmark Subtype", available_subtypes)
-        elif len(available_subtypes) == 1:
-            subtype = available_subtypes[0]
-            if subtype != "General":
-                st.info(f"ℹ️ Using benchmark subtype: **{subtype}**")
+        # Resolve the benchmark baseline used by all comparison tables, charts and QA checks
+        if city_sel == zone_avg_label:
+            zone_bms = [v for k,v in BENCHMARKS.items()
+                        if k[0]==building_type and v.get("province")==province and k[2]==climate_zone]
+            bm = average_benchmarks(zone_bms) if zone_bms else None
+            city, subtype = "", "All"
+            if bm:
+                st.info(f"Comparing against the **Climate Zone {climate_zone} average** for {building_type} in {province} "
+                        f"— average of {bm['_n']} benchmark(s). Select a city to use a specific benchmark model.")
+            else:
+                st.warning("No benchmark found for this combination. KPIs will be calculated but no comparison will be shown.")
         else:
-            subtype = "General"
-            st.warning("No benchmark found for this combination. KPIs will be calculated but no comparison will be shown.")
+            city = city_sel
+            available_subtypes = sorted({k[3] for k in BENCHMARKS
+                                         if k[0]==building_type and k[1]==city and k[2]==climate_zone})
+            if len(available_subtypes) > 1:
+                subtype = st.selectbox("Benchmark Model (subtype)", available_subtypes,
+                                       help="Pick the exact benchmark model to compare against.")
+            elif len(available_subtypes) == 1:
+                subtype = available_subtypes[0]
+            else:
+                subtype = "General"
+            bm = BENCHMARKS.get((building_type, city, climate_zone, subtype))
+            if bm:
+                lbl = f"{building_type} · {city} · Climate Zone {climate_zone}" + (f" · {subtype}" if subtype not in ("General","All") else "")
+                st.info(f"Comparing against benchmark model: **{lbl}**.")
+            else:
+                st.warning("No benchmark found for this exact combination. KPIs will be calculated but no comparison will be shown.")
 
-        province = province_of_city(city)
-        # Dropdown options: province/fuel → factor (kg CO₂e/kWh), shown with the value beside the name.
+        # ── GHG emission factors (defaults follow the selected province) ──
         elec_opts  = {p: round(g/1000, 4)              for p, g in ELEC_CO2E_G_PER_KWH.items()}
         gas_opts   = {p: round(g/NG_KWH_PER_M3/1000,4) for p, g in NG_CO2_G_PER_M3.items()}
         # Other fuels converted from NIR Table 3.3 (g GHG/L) using AR5 GWP + typical liquid HHV.
         other_opts = {"None": 0.0, "Propane": 0.2197, "Butane": 0.2229}
         CUSTOM = "Custom value…"
+        elec_default = round(ELEC_CO2E_G_PER_KWH.get(province, 0)/1000, 4)
+        gas_default  = round(NG_CO2_G_PER_M3.get(province, 0)/NG_KWH_PER_M3/1000, 4) if NG_CO2_G_PER_M3.get(province) else 0.0
 
         st.markdown("**GHG Emission Factors (kg CO₂e/kWh)** — select a province/fuel value (Canada 2026 tables) or choose *Custom value…* to enter your own. Choose 0 / None to skip GHGI.")
         ef1, ef2, ef3 = st.columns(3)
         with ef1:
             opts = [f"{p} — {v:.4f}" for p, v in elec_opts.items()] + [CUSTOM]
             di = list(elec_opts).index(province) if province in elec_opts else 0
-            sel = st.selectbox("Electricity", opts, index=di, key=f"ef_elec_sel_{city}",
+            sel = st.selectbox("Electricity", opts, index=di, key=f"ef_elec_sel_{province}",
                                help="Provincial electricity consumption intensity (Table 5.3, 2026).")
             ef_elec = (st.number_input("Electricity — custom", min_value=0.0, step=0.001, format="%.4f",
-                                       value=elec_factor_for(city), key=f"ef_elec_cust_{city}")
+                                       value=elec_default, key=f"ef_elec_cust_{province}")
                        if sel == CUSTOM else elec_opts[sel.rsplit(" — ", 1)[0]])
         with ef2:
             opts = [f"{p} — {v:.4f}" for p, v in gas_opts.items()] + [CUSTOM]
             di = list(gas_opts).index(province) if province in gas_opts else 0
-            sel = st.selectbox("Natural Gas", opts, index=di, key=f"ef_gas_sel_{city}",
+            sel = st.selectbox("Natural Gas", opts, index=di, key=f"ef_gas_sel_{province}",
                                help="Marketable natural-gas CO₂ (Table 1.3, 2026, g CO₂/m³) ÷ 10.55 kWh/m³.")
             ef_gas = (st.number_input("Natural Gas — custom", min_value=0.0, step=0.001, format="%.4f",
-                                      value=gas_factor_for(city), key=f"ef_gas_cust_{city}")
+                                      value=gas_default, key=f"ef_gas_cust_{province}")
                       if sel == CUSTOM else gas_opts[sel.rsplit(" — ", 1)[0]])
         with ef3:
             opts = [f"{p} — {v:.4f}" for p, v in other_opts.items()] + [CUSTOM]
-            sel = st.selectbox("Other Resources / Biomass", opts, index=0, key=f"ef_other_sel_{city}",
+            sel = st.selectbox("Other Resources / Biomass", opts, index=0, key=f"ef_other_sel_{province}",
                                help="Propane/Butane converted from Table 3.3; or pick Custom for biomass/other.")
             ef_other = (st.number_input("Other — custom", min_value=0.0, step=0.001, format="%.4f",
-                                        value=0.0, key=f"ef_other_cust_{city}")
+                                        value=0.0, key=f"ef_other_cust_{province}")
                         if sel == CUSTOM else other_opts[sel.rsplit(" — ", 1)[0]])
 
         cb,cn = st.columns([1,4])
@@ -1390,17 +1425,20 @@ else:
                 st.session_state.step = 2 if "headers" in st.session_state else 1; st.rerun()
         with cn:
             if st.button("Calculate KPIs & View Results →", type="primary"):
-                kpis   = calculate_kpis(st.session_state.vals, ef_elec=ef_elec, ef_gas=ef_gas, ef_other=ef_other)
-                bm_key = (building_type, city, climate_zone, subtype)
-                bm     = BENCHMARKS.get(bm_key)
-                flags  = generate_flags(kpis, bm, building_type)
-                pct    = calc_percentile(kpis["total_eui"], bm["pct_data"]) if bm else None
-                st.session_state.results = {"kpis":kpis,"bm":bm,"flags":flags,"percentile":pct,
-                    "meta":{"project_name":project_name,"building_type":building_type,"city":city,
-                            "climate_zone":climate_zone,"subtype":subtype,"software":software,
-                            "model_type":model_type,"phase":phase,"date":str(date.today()),
-                            "ef_elec":ef_elec,"ef_gas":ef_gas,"ef_other":ef_other}}
-                st.session_state.step=4; st.rerun()
+                if not project_name.strip():
+                    st.error("⚠️ Project Name is required.")
+                elif not software:
+                    st.error("⚠️ Simulation Software is required.")
+                else:
+                    kpis   = calculate_kpis(st.session_state.vals, ef_elec=ef_elec, ef_gas=ef_gas, ef_other=ef_other)
+                    flags  = generate_flags(kpis, bm, building_type)
+                    pct    = calc_percentile(kpis["total_eui"], bm["pct_data"]) if bm else None
+                    st.session_state.results = {"kpis":kpis,"bm":bm,"flags":flags,"percentile":pct,
+                        "meta":{"project_name":project_name,"building_type":building_type,"city":city,
+                                "province":province,"climate_zone":climate_zone,"subtype":subtype,"software":software,
+                                "model_type":model_type,"phase":phase,"date":str(date.today()),
+                                "ef_elec":ef_elec,"ef_gas":ef_gas,"ef_other":ef_other}}
+                    st.session_state.step=4; st.rerun()
 
     elif st.session_state.step == 4 and st.session_state.results:
         r=st.session_state.results; kpis=r["kpis"]; bm=r["bm"]; meta=r["meta"]; flags=r["flags"]; pct=r["percentile"]
@@ -1420,10 +1458,12 @@ else:
         proj_name     = meta["project_name"] or "Project Results"
         pct_text      = f"&nbsp;&nbsp;|&nbsp;&nbsp; Benchmark percentile: <b>{pct}th</b> (lower = better)" if pct else ""
         flag_text     = f"Pass: {fc['pass']}  &nbsp; Review: {fc['warn']}  &nbsp; Fail: {fc['fail']}"
-        subtype_disp  = f" &middot; {meta.get('subtype','')}" if meta.get('subtype','') not in ("","General") else ""
+        subtype_disp  = f" &middot; {meta.get('subtype','')}" if meta.get('subtype','') not in ("","General","All") else ""
         phase_disp    = f" &middot; {meta['phase']}" if meta.get('phase') else ""
-        info_line     = (f"{meta['building_type']} &middot; {meta['city']} &middot; "
-                         f"Climate Zone {meta['climate_zone']}{subtype_disp} &middot; {meta['model_type']}"
+        city_disp     = f"{meta['city']} &middot; " if meta.get('city') else ""
+        scope_disp    = "" if meta.get('city') else " &middot; zone average"
+        info_line     = (f"{meta['building_type']} &middot; {city_disp}"
+                         f"Climate Zone {meta['climate_zone']}{scope_disp}{subtype_disp} &middot; {meta['model_type']}"
                          f"{phase_disp} &middot; {meta['software']}")
         banner_html = (
             f'<div style="background:{overall_color};border-left:5px solid {overall_border};'
