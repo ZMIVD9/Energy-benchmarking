@@ -1328,7 +1328,7 @@ else:
         # ── Required project metadata (visible & mandatory) ──
         m1, m2, m3 = st.columns(3)
         with m1:
-            project_name = st.text_input("Project Name *", placeholder="e.g. New School A")
+            project_name = st.text_input("Project Name", placeholder="e.g. New School A")
         with m2:
             software     = st.selectbox("Simulation Software *", SOFTWARE_OPTIONS)
         with m3:
@@ -1424,9 +1424,7 @@ else:
                 st.session_state.step = 2 if "headers" in st.session_state else 1; st.rerun()
         with cn:
             if st.button("Calculate KPIs & View Results →", type="primary"):
-                if not project_name.strip():
-                    st.error("⚠️ Project Name is required.")
-                elif not software:
+                if not software:
                     st.error("⚠️ Simulation Software is required.")
                 else:
                     kpis   = calculate_kpis(st.session_state.vals, ef_elec=ef_elec, ef_gas=ef_gas, ef_other=ef_other)
