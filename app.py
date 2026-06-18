@@ -137,7 +137,8 @@ def average_benchmarks(bm_list):
         "median_ghgi": mean("median_ghgi"),
         "heat_pct": mean("heat_pct"), "cool_pct": mean("cool_pct"), "fan_pct": mean("fan_pct"),
         "ltg_pct": mean("ltg_pct"), "dhw_pct": mean("dhw_pct"), "recept_pct": mean("recept_pct"),
-        "pumps_pct": mean("pumps_pct"),
+        "pumps_pct": mean("pumps_pct"), "elec_pct": mean("elec_pct"),
+        "gas_pct": mean("gas_pct"), "heat_rej_pct": mean("heat_rej_pct"),
         "pct_data":      mean_array("pct_data"),
         "tedi_pct_data": mean_array("tedi_pct_data"),
         "subtype": "All", "_n": n,
@@ -294,6 +295,9 @@ def load_benchmarks():
                 "dhw_pct":     float(row["DHW %"]),
                 "recept_pct":  float(row["Receptacle %"]),
                 "pumps_pct":   float(row["Pumps %"]),
+                "elec_pct":    float(row.get("Electricity %")   or row.get("Electricity")  or 0),
+                "gas_pct":     float(row.get("NaturalGas %")    or row.get("Natural Gas %") or row.get("NaturalGas") or 0),
+                "heat_rej_pct":float(row.get("Heat Rejection %") or row.get("HeatRejection %") or 0),
                 "pct_data":    pct_data,
                 "tedi_pct_data": tedi_pct_data,
                 "subtype":     subtype,
@@ -1040,7 +1044,8 @@ if st.session_state.page == "⚙️ Manage Benchmarks":
                 "Heating %": bm["heat_pct"], "Cooling %": bm["cool_pct"],
                 "Fan %": bm["fan_pct"], "Lighting %": bm["ltg_pct"],
                 "DHW %": bm["dhw_pct"], "Receptacle %": bm["recept_pct"],
-                "Pumps %": bm["pumps_pct"],
+                "Pumps %": bm["pumps_pct"], "Electricity %": bm.get("elec_pct",0),
+                "NaturalGas %": bm.get("gas_pct",0), "Heat Rejection %": bm.get("heat_rej_pct",0),
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         st.caption(f"Total: {len(rows)} benchmark records — refreshes automatically every 60 seconds")
@@ -1140,31 +1145,61 @@ elif st.session_state.page == "📚 Benchmark Explorer":
             t3.metric("🔴 High Flag (+15%)",     f"{bm['high_tedi']} kWh/m²·yr",
                       help="15% above median TEDI — fail threshold in QA/QC.")
 
-        eu_labels = ["Heating","Cooling","Fans","Lighting","DHW","Receptacle","Pumps"]
-        eu_pcts   = [bm["heat_pct"],bm["cool_pct"],bm["fan_pct"],bm["ltg_pct"],bm["dhw_pct"],bm["recept_pct"],bm["pumps_pct"]]
+        # ── end-use data ──────────────────────────────────────────────────────
+        eu_labels = ["Heating","Cooling","Fans","Lighting","DHW","Receptacle","Pumps","Heat Rejection"]
+        eu_pcts   = [bm["heat_pct"], bm["cool_pct"], bm["fan_pct"], bm["ltg_pct"],
+                     bm["dhw_pct"], bm["recept_pct"], bm["pumps_pct"], bm.get("heat_rej_pct",0)]
         med_vals  = [round(bm["median_eui"]*p/100,1) for p in eu_pcts]
         good_vals = [round(bm["good_eui"]*p/100,1)   for p in eu_pcts]
         high_vals = [round(bm["high_eui"]*p/100,1)   for p in eu_pcts]
 
+        # ── energy source data ─────────────────────────────────────────────────
+        src_labels = ["Electricity","Natural Gas"]
+        src_pcts   = [bm.get("elec_pct",0), bm.get("gas_pct",0)]
+        src_med    = [round(bm["median_eui"]*p/100,1) for p in src_pcts]
+
         cp1, cp2 = st.columns(2)
         with cp1:
-            pie_l = [l for l,v in zip(eu_labels,med_vals) if v>0]
-            pie_v = [v for v in med_vals if v>0]
             subtype_label = f" ({bsubtype})" if bsubtype not in ("General", "All") else ""
-            st.plotly_chart(make_pie(pie_l, pie_v, f"Median End-Use Split — {btype} · {bcity}{subtype_label}"), use_container_width=True)
+            # Left: energy source pie
+            src_l = [l for l,v in zip(src_labels, src_med) if v>0]
+            src_v = [v for v in src_med if v>0]
+            if src_l:
+                src_colors = ["#3b82f6","#ef4444"][:len(src_l)]
+                fig_src = go.Figure(go.Pie(
+                    labels=src_l, values=src_v, hole=0.42,
+                    marker=dict(colors=src_colors, line=dict(color="#fff",width=2)),
+                    textinfo="label+percent", textfont=dict(size=12),
+                    hovertemplate="<b>%{label}</b><br>%{value} kWh/m²·yr<br>%{percent}<extra></extra>",
+                ))
+                fig_src.update_layout(
+                    title=dict(text=f"Energy Source Split — {btype} · {bcity}{subtype_label}", font=dict(size=13,color="#0f4c81")),
+                    showlegend=True, legend=dict(orientation="v",x=1.02,y=0.5,font=dict(size=11)),
+                    margin=dict(t=40,b=10,l=10,r=10), height=320,
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                )
+                st.plotly_chart(fig_src, use_container_width=True)
+            else:
+                st.caption("No Electricity % / NaturalGas % data in the sheet for this benchmark.")
         with cp2:
-            fig_bar = go.Figure()
-            fig_bar.add_trace(go.Bar(name="Median EUI", x=eu_labels, y=med_vals, marker_color="#0f4c81", opacity=0.85))
-            # Add ±15% error bars to show the good/high range
-            fig_bar.update_traces(error_y=dict(
-                type="data", symmetric=True,
-                array=[round(v*0.15,1) for v in med_vals],
-                color="#94a3b8", thickness=1.5, width=4,
-            ))
-            fig_bar.update_layout(template="plotly_white", height=320,
-                                  title=dict(text="End-Use Median EUI (bars show ±15% range)", font=dict(size=13,color="#0f4c81")),
-                                  yaxis_title="EUI (kWh/m²·yr)", showlegend=False, margin=dict(t=40,b=10))
-            st.plotly_chart(fig_bar, use_container_width=True)
+            # Right: end-use pie
+            pie_l = [l for l,v in zip(eu_labels, med_vals) if v>0]
+            pie_v = [v for v in med_vals if v>0]
+            st.plotly_chart(make_pie(pie_l, pie_v, f"Median End-Use Split — {btype} · {bcity}{subtype_label}"), use_container_width=True)
+
+        # ── bar chart — end-uses only (no energy sources); heat rejection included ──
+        bar_labels = [l for l,v in zip(eu_labels, med_vals) if v>0 or l=="Heat Rejection"]
+        bar_med    = [v for l,v in zip(eu_labels, med_vals)  if v>0 or l=="Heat Rejection"]
+        fig_bar = go.Figure()
+        fig_bar.add_trace(go.Bar(name="Median EUI", x=bar_labels, y=bar_med,
+                                 marker_color="#0f4c81", opacity=0.85,
+                                 error_y=dict(type="data", symmetric=True,
+                                              array=[round(v*0.15,1) for v in bar_med],
+                                              color="#94a3b8", thickness=1.5, width=4)))
+        fig_bar.update_layout(template="plotly_white", height=320,
+                              title=dict(text="End-Use Median EUI (bars show ±15% range)", font=dict(size=13,color="#0f4c81")),
+                              yaxis_title="EUI (kWh/m²·yr)", showlegend=False, margin=dict(t=40,b=10))
+        st.plotly_chart(fig_bar, use_container_width=True)
 
         st.markdown("#### End-Use Breakdown Table")
         st.caption("Good and High Flag are calculated as ±15% of median.")
