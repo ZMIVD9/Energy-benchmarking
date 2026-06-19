@@ -139,6 +139,7 @@ def average_benchmarks(bm_list):
         "ltg_pct": mean("ltg_pct"), "dhw_pct": mean("dhw_pct"), "recept_pct": mean("recept_pct"),
         "pumps_pct": mean("pumps_pct"), "elec_pct": mean("elec_pct"),
         "gas_pct": mean("gas_pct"), "heat_rej_pct": mean("heat_rej_pct"),
+        "misc_pct": mean("misc_pct"),
         "pct_data":      mean_array("pct_data"),
         "tedi_pct_data": mean_array("tedi_pct_data"),
         "subtype": "All", "_n": n,
@@ -298,6 +299,7 @@ def load_benchmarks():
                 "elec_pct":    float(row.get("Electricity %")   or row.get("Electricity")  or 0),
                 "gas_pct":     float(row.get("NaturalGas %")    or row.get("Natural Gas %") or row.get("NaturalGas") or 0),
                 "heat_rej_pct":float(row.get("Heat Rejection %") or row.get("HeatRejection %") or 0),
+                "misc_pct":    float(row.get("Miscellaneous %")  or row.get("Miscellaneous") or 0),
                 "pct_data":    pct_data,
                 "tedi_pct_data": tedi_pct_data,
                 "subtype":     subtype,
@@ -1049,6 +1051,7 @@ if st.session_state.page == "⚙️ Manage Benchmarks":
                 "DHW %": bm["dhw_pct"], "Receptacle %": bm["recept_pct"],
                 "Pumps %": bm["pumps_pct"], "Electricity %": bm.get("elec_pct",0),
                 "NaturalGas %": bm.get("gas_pct",0), "Heat Rejection %": bm.get("heat_rej_pct",0),
+                "Miscellaneous %": bm.get("misc_pct",0),
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         st.caption(f"Total: {len(rows)} benchmark records — refreshes automatically every 60 seconds")
@@ -1090,21 +1093,23 @@ elif st.session_state.page == "📚 Benchmark Explorer":
     st.markdown("Browse the benchmark database by building type and location — no upload required.")
     st.divider()
 
+    # ── Row 1: required filters ───────────────────────────────────────────────
     cf1, cf2, cf3 = st.columns(3)
     with cf1:
         bx_type = st.selectbox("Building Type", ALL_BUILDING_TYPES)
-    # Climate zones for this building type across all provinces
     all_zones = sorted({k[2] for k,v in BENCHMARKS.items() if k[0]==bx_type and k[2]})
     with cf2:
         bx_zone = st.selectbox("Climate Zone", all_zones if all_zones else ["—"])
-
-    # ── Optional refinement filters ─────────────────────────────────────────
+    # HVAC System — required; list all distinct values for this type + zone
+    all_hvac = sorted({str(v.get("heating_system","")) for k,v in BENCHMARKS.items()
+                       if k[0]==bx_type and k[2]==bx_zone and v.get("heating_system")})
+    all_hvac_label = "All HVAC systems"
     with cf3:
-        st.markdown("&nbsp;", unsafe_allow_html=True)   # vertical spacer
+        bx_hvac = st.selectbox("HVAC System", [all_hvac_label] + all_hvac)
 
+    # ── Row 2: optional refinement filters (all in one row) ──────────────────
     opt1, opt2, opt3, opt4 = st.columns(4)
 
-    # Province (optional)
     provs = sorted({v["province"] for k,v in BENCHMARKS.items()
                     if k[0]==bx_type and k[2]==bx_zone
                     and v.get("province") and str(v["province"]).strip().lower() not in ("","nan")})
@@ -1112,59 +1117,53 @@ elif st.session_state.page == "📚 Benchmark Explorer":
     with opt1:
         bx_prov = st.selectbox("Province (optional)", [all_provs_label] + provs)
 
-    # City (optional) — scoped by zone and province if one is chosen
     def _city_filter(k, v):
         if k[0]!=bx_type or k[2]!=bx_zone: return False
         if bx_prov != all_provs_label and v.get("province")!=bx_prov: return False
+        if bx_hvac != all_hvac_label and str(v.get("heating_system",""))!=bx_hvac: return False
         return True
     cities = sorted({k[1] for k,v in BENCHMARKS.items() if _city_filter(k,v)})
     all_cities_label = "All cities"
     with opt2:
         bx_city = st.selectbox("City (optional)", [all_cities_label] + cities)
 
-    # Project Year / Audit/New / Heating System — read from sheet; show only values present in filtered rows
     def _bm_filter(k, v):
         if not _city_filter(k,v): return False
         if bx_city != all_cities_label and k[1]!=bx_city: return False
-        if bx_prov != all_provs_label and v.get("province")!=bx_prov: return False
         return True
     filtered_bms = {k:v for k,v in BENCHMARKS.items() if _bm_filter(k,v)}
 
-    proj_years = sorted({str(v.get("project_year","")) for v in filtered_bms.values() if v.get("project_year")})
-    audit_types = sorted({str(v.get("audit_new","")) for v in filtered_bms.values() if v.get("audit_new")})
-    heat_systems = sorted({str(v.get("heating_system","")) for v in filtered_bms.values() if v.get("heating_system")})
-
+    proj_years  = sorted({str(v.get("project_year","")) for v in filtered_bms.values() if v.get("project_year")})
+    audit_types = sorted({str(v.get("audit_new",""))    for v in filtered_bms.values() if v.get("audit_new")})
     all_label = "All"
     with opt3:
-        bx_year   = st.selectbox("Project Year (optional)", [all_label] + proj_years)
-        bx_audit  = st.selectbox("Audit / New (optional)",  [all_label] + audit_types)
+        bx_year  = st.selectbox("Project Year (optional)", [all_label] + proj_years)
     with opt4:
-        bx_heat   = st.selectbox("Heating System (optional)", [all_label] + heat_systems)
+        bx_audit = st.selectbox("Audit / New (optional)",  [all_label] + audit_types)
 
     # ── Resolve matching benchmarks ─────────────────────────────────────────
     def _final_filter(k, v):
         if not _bm_filter(k,v): return False
         if bx_year  != all_label and str(v.get("project_year","")) != bx_year:  return False
         if bx_audit != all_label and str(v.get("audit_new",""))    != bx_audit: return False
-        if bx_heat  != all_label and str(v.get("heating_system",""))!= bx_heat: return False
         return True
     final_bms = {k:v for k,v in BENCHMARKS.items() if _final_filter(k,v)}
 
     if not final_bms:
         scope = f"{bx_type} · Climate Zone {bx_zone}"
+        if bx_hvac  != all_hvac_label:  scope += f" · {bx_hvac}"
         if bx_prov  != all_provs_label: scope += f" · {bx_prov}"
         if bx_city  != all_cities_label: scope += f" · {bx_city}"
         st.warning(f"No benchmark data found for **{scope}** with the selected filters. Try broadening your selection.")
         st.stop()
 
-    # Always show the average of all matching rows; label changes based on selections
     agg = average_benchmarks(list(final_bms.values()))
     scope_parts = [f"Climate Zone {bx_zone}"]
+    if bx_hvac  != all_hvac_label:  scope_parts.append(bx_hvac)
     if bx_prov  != all_provs_label:  scope_parts.append(bx_prov)
     if bx_city  != all_cities_label: scope_parts.append(bx_city)
     if bx_year  != all_label:        scope_parts.append(f"Year {bx_year}")
     if bx_audit != all_label:        scope_parts.append(bx_audit)
-    if bx_heat  != all_label:        scope_parts.append(bx_heat)
     scope_str = " · ".join(scope_parts)
     matches = {(bx_type, bx_city if bx_city!=all_cities_label else "", bx_zone, "filtered"): agg}
     if agg["_n"] == 1:
@@ -1193,9 +1192,10 @@ elif st.session_state.page == "📚 Benchmark Explorer":
                       help="15% above median TEDI — fail threshold in QA/QC.")
 
         # ── end-use data ──────────────────────────────────────────────────────
-        eu_labels = ["Heating","Cooling","Fans","Lighting","DHW","Receptacle","Pumps","Heat Rejection"]
+        eu_labels = ["Heating","Cooling","Fans","Lighting","DHW","Receptacle","Pumps","Heat Rejection","Miscellaneous"]
         eu_pcts   = [bm["heat_pct"], bm["cool_pct"], bm["fan_pct"], bm["ltg_pct"],
-                     bm["dhw_pct"], bm["recept_pct"], bm["pumps_pct"], bm.get("heat_rej_pct",0)]
+                     bm["dhw_pct"], bm["recept_pct"], bm["pumps_pct"],
+                     bm.get("heat_rej_pct",0), bm.get("misc_pct",0)]
         med_vals  = [round(bm["median_eui"]*p/100,1) for p in eu_pcts]
         good_vals = [round(bm["good_eui"]*p/100,1)   for p in eu_pcts]
         high_vals = [round(bm["high_eui"]*p/100,1)   for p in eu_pcts]
@@ -1207,7 +1207,7 @@ elif st.session_state.page == "📚 Benchmark Explorer":
 
         cp1, cp2 = st.columns(2)
         with cp1:
-            subtype_label = f" ({bsubtype})" if bsubtype not in ("General", "All") else ""
+            subtype_label = f" ({bsubtype})" if bsubtype not in ("General", "All", "filtered") else ""
             # Left: energy source pie
             src_l = [l for l,v in zip(src_labels, src_med) if v>0]
             src_v = [v for v in src_med if v>0]
@@ -1229,19 +1229,20 @@ elif st.session_state.page == "📚 Benchmark Explorer":
             else:
                 st.caption("No Electricity % / NaturalGas % data in the sheet for this benchmark.")
         with cp2:
-            # Right: end-use pie
+            # Right: end-use pie (includes Miscellaneous)
             pie_l = [l for l,v in zip(eu_labels, med_vals) if v>0]
             pie_v = [v for v in med_vals if v>0]
             st.plotly_chart(make_pie(pie_l, pie_v, f"Median End-Use Split — {btype} · {bcity}{subtype_label}"), use_container_width=True)
 
-        # ── bar chart — end-uses only (no energy sources); heat rejection included ──
-        bar_labels = [l for l,v in zip(eu_labels, med_vals) if v>0 or l=="Heat Rejection"]
-        bar_med    = [v for l,v in zip(eu_labels, med_vals)  if v>0 or l=="Heat Rejection"]
+        # ── bar chart — end-uses only; heat rejection + miscellaneous included ──
+        bar_pairs = [(l,v) for l,v in zip(eu_labels, med_vals) if v>0]
+        bar_labels_f = [l for l,v in bar_pairs]
+        bar_med_f    = [v for l,v in bar_pairs]
         fig_bar = go.Figure()
-        fig_bar.add_trace(go.Bar(name="Median EUI", x=bar_labels, y=bar_med,
+        fig_bar.add_trace(go.Bar(name="Median EUI", x=bar_labels_f, y=bar_med_f,
                                  marker_color="#0f4c81", opacity=0.85,
                                  error_y=dict(type="data", symmetric=True,
-                                              array=[round(v*0.15,1) for v in bar_med],
+                                              array=[round(v*0.15,1) for v in bar_med_f],
                                               color="#94a3b8", thickness=1.5, width=4)))
         fig_bar.update_layout(template="plotly_white", height=320,
                               title=dict(text="End-Use Median EUI (bars show ±15% range)", font=dict(size=13,color="#0f4c81")),
