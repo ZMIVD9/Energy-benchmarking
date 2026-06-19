@@ -302,6 +302,9 @@ def load_benchmarks():
                 "tedi_pct_data": tedi_pct_data,
                 "subtype":     subtype,
                 "province":    province,
+                "project_year":   str(row.get("Project Year/Date", row.get("Project Year", "")) or "").strip(),
+                "audit_new":      str(row.get("Audit/New", "") or "").strip(),
+                "heating_system": str(row.get("Heating System", "") or "").strip(),
             }
         except Exception:
             continue
@@ -1087,46 +1090,90 @@ elif st.session_state.page == "📚 Benchmark Explorer":
     st.markdown("Browse the benchmark database by building type and location — no upload required.")
     st.divider()
 
-    cf1, cf2, cf3, cf4 = st.columns(4)
+    cf1, cf2, cf3 = st.columns(3)
     with cf1:
         bx_type = st.selectbox("Building Type", ALL_BUILDING_TYPES)
-    # Provinces that have benchmarks for this building type (read from the sheet)
-    provs = sorted({v["province"] for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")})
+    # Climate zones for this building type across all provinces
+    all_zones = sorted({k[2] for k,v in BENCHMARKS.items() if k[0]==bx_type and k[2]})
     with cf2:
-        bx_prov = st.selectbox("Province", provs if provs else ["—"])
-    # Climate zones available for this building type + province (no "average" entry —
-    # selecting a zone shows that zone's average by default)
-    zones_in_prov = sorted({k[2] for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")==bx_prov and k[2]})
-    with cf3:
-        bx_zone = st.selectbox("Climate Zone", zones_in_prov if zones_in_prov else ["—"])
-    # Optional city refinement within the selected zone
-    cities_in_zone = sorted({k[1] for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")==bx_prov and k[2]==bx_zone})
-    zone_avg_label = f"Climate Zone {bx_zone} average"
-    with cf4:
-        bx_city = st.selectbox("City (optional)", [zone_avg_label] + cities_in_zone,
-                               help="Leave on the zone average, or pick a city to see city-specific data.")
+        bx_zone = st.selectbox("Climate Zone", all_zones if all_zones else ["—"])
 
-    if bx_city == zone_avg_label:
-        zone_bms = [v for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")==bx_prov and k[2]==bx_zone]
-        if not zone_bms:
-            st.warning(f"No benchmark data found for **{bx_type}** in **Climate Zone {bx_zone}, {bx_prov}**. Try a different combination, or add a new row in your Google Sheet.")
-            st.stop()
-        agg = average_benchmarks(zone_bms)
-        matches = {(bx_type, "", bx_zone, "All"): agg}
-        st.info(f"Showing the **Climate Zone {bx_zone} average** for {bx_type} in {bx_prov} — average of {agg['_n']} benchmark(s). Select a city above to see city-specific data.")
+    # ── Optional refinement filters ─────────────────────────────────────────
+    with cf3:
+        st.markdown("&nbsp;", unsafe_allow_html=True)   # vertical spacer
+
+    opt1, opt2, opt3, opt4 = st.columns(4)
+
+    # Province (optional)
+    provs = sorted({v["province"] for k,v in BENCHMARKS.items()
+                    if k[0]==bx_type and k[2]==bx_zone
+                    and v.get("province") and str(v["province"]).strip().lower() not in ("","nan")})
+    all_provs_label = "All provinces"
+    with opt1:
+        bx_prov = st.selectbox("Province (optional)", [all_provs_label] + provs)
+
+    # City (optional) — scoped by zone and province if one is chosen
+    def _city_filter(k, v):
+        if k[0]!=bx_type or k[2]!=bx_zone: return False
+        if bx_prov != all_provs_label and v.get("province")!=bx_prov: return False
+        return True
+    cities = sorted({k[1] for k,v in BENCHMARKS.items() if _city_filter(k,v)})
+    all_cities_label = "All cities"
+    with opt2:
+        bx_city = st.selectbox("City (optional)", [all_cities_label] + cities)
+
+    # Project Year / Audit/New / Heating System — read from sheet; show only values present in filtered rows
+    def _bm_filter(k, v):
+        if not _city_filter(k,v): return False
+        if bx_city != all_cities_label and k[1]!=bx_city: return False
+        if bx_prov != all_provs_label and v.get("province")!=bx_prov: return False
+        return True
+    filtered_bms = {k:v for k,v in BENCHMARKS.items() if _bm_filter(k,v)}
+
+    proj_years = sorted({str(v.get("project_year","")) for v in filtered_bms.values() if v.get("project_year")})
+    audit_types = sorted({str(v.get("audit_new","")) for v in filtered_bms.values() if v.get("audit_new")})
+    heat_systems = sorted({str(v.get("heating_system","")) for v in filtered_bms.values() if v.get("heating_system")})
+
+    all_label = "All"
+    with opt3:
+        bx_year   = st.selectbox("Project Year (optional)", [all_label] + proj_years)
+        bx_audit  = st.selectbox("Audit / New (optional)",  [all_label] + audit_types)
+    with opt4:
+        bx_heat   = st.selectbox("Heating System (optional)", [all_label] + heat_systems)
+
+    # ── Resolve matching benchmarks ─────────────────────────────────────────
+    def _final_filter(k, v):
+        if not _bm_filter(k,v): return False
+        if bx_year  != all_label and str(v.get("project_year","")) != bx_year:  return False
+        if bx_audit != all_label and str(v.get("audit_new",""))    != bx_audit: return False
+        if bx_heat  != all_label and str(v.get("heating_system",""))!= bx_heat: return False
+        return True
+    final_bms = {k:v for k,v in BENCHMARKS.items() if _final_filter(k,v)}
+
+    if not final_bms:
+        scope = f"{bx_type} · Climate Zone {bx_zone}"
+        if bx_prov  != all_provs_label: scope += f" · {bx_prov}"
+        if bx_city  != all_cities_label: scope += f" · {bx_city}"
+        st.warning(f"No benchmark data found for **{scope}** with the selected filters. Try broadening your selection.")
+        st.stop()
+
+    # Always show the average of all matching rows; label changes based on selections
+    agg = average_benchmarks(list(final_bms.values()))
+    scope_parts = [f"Climate Zone {bx_zone}"]
+    if bx_prov  != all_provs_label:  scope_parts.append(bx_prov)
+    if bx_city  != all_cities_label: scope_parts.append(bx_city)
+    if bx_year  != all_label:        scope_parts.append(f"Year {bx_year}")
+    if bx_audit != all_label:        scope_parts.append(bx_audit)
+    if bx_heat  != all_label:        scope_parts.append(bx_heat)
+    scope_str = " · ".join(scope_parts)
+    matches = {(bx_type, bx_city if bx_city!=all_cities_label else "", bx_zone, "filtered"): agg}
+    if agg["_n"] == 1:
+        st.info(f"Showing 1 benchmark for **{bx_type} · {scope_str}**.")
     else:
-        matches = {k:v for k,v in BENCHMARKS.items() if k[0]==bx_type and v.get("province")==bx_prov and k[2]==bx_zone and k[1]==bx_city}
-        if not matches:
-            st.warning(f"No benchmark data found for **{bx_type}** in **{bx_city}, Climate Zone {bx_zone}**. Try a different combination, or add a new row in your Google Sheet.")
-            st.stop()
-        st.info(f"Showing **{bx_city}**-specific data for Climate Zone {bx_zone}.")
+        st.info(f"Showing the **average of {agg['_n']} benchmarks** for **{bx_type} · {scope_str}**. Refine with the optional filters above.")
 
     for (btype, bcity, bzone, bsubtype), bm in matches.items():
-        city_tag    = f" · {bcity}" if bcity else ""
-        zone_tag    = f" · Climate Zone {bzone}" if bzone else ""
-        subtype_tag = (" · average" if bsubtype == "All"
-                       else f" · {bsubtype}" if bsubtype != "General" else "")
-        st.markdown(f"## 🏢 {btype}{city_tag}{zone_tag}{subtype_tag}")
+        st.markdown(f"## 🏢 {btype} · {scope_str}")
 
         m1, m2, m3 = st.columns(3)
         m1.metric("📊 Median EUI",          f"{bm['median_eui']} kWh/m²·yr",
