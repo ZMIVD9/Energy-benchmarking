@@ -25,19 +25,99 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .main { background-color: #f8fafc; }
-    .block-container { padding-top: 1.5rem; }
-    h1 { color: #0f4c81; font-size: 1.6rem !important; }
-    h2 { color: #0f4c81; font-size: 1.2rem !important; }
-    h3 { font-size: 1rem !important; }
-    .flag-pass { background:#f0fdf4; border-left:4px solid #16a34a; padding:10px 14px; border-radius:6px; margin:6px 0; color:#14532d !important; font-size:13px; }
-    .flag-warn { background:#fffbeb; border-left:4px solid #d97706; padding:10px 14px; border-radius:6px; margin:6px 0; color:#78350f !important; font-size:13px; }
-    .flag-fail { background:#fef2f2; border-left:4px solid #dc2626; padding:10px 14px; border-radius:6px; margin:6px 0; color:#7f1d1d !important; font-size:13px; }
-    .flag-info { background:#eff6ff; border-left:4px solid #3b82f6; padding:10px 14px; border-radius:6px; margin:6px 0; color:#1e3a8a !important; font-size:13px; }
+    :root {
+        --navy-900: #0a1e33;
+        --navy-800: #123a5e;
+        --navy-700: #1c4a73;
+        --accent: #e2542e;
+        --accent-hover: #c8431f;
+        --border: #dde3ea;
+        --muted: #64748b;
+        --canvas: #f4f6f9;
+    }
+
+    /* -- Base canvas -- */
+    .main { background-color: var(--canvas); }
+    .block-container { padding-top: 1.25rem; max-width: 1240px; }
+
+    /* -- Headings -- */
+    h1 { color: var(--navy-900); font-size: 1.65rem !important; font-weight: 800 !important; letter-spacing: -0.01em; }
+    h2 { color: var(--navy-900); font-size: 1.2rem !important; font-weight: 700 !important; }
+    h3 { color: var(--navy-900); font-size: 1.02rem !important; font-weight: 700 !important;
+         border-left: 3px solid var(--accent); padding-left: 10px; margin-top: 1.4rem !important; }
+    hr { border-color: var(--border) !important; }
+
+    /* -- App top banner -- */
+    .app-topbar {
+        background: linear-gradient(100deg, var(--navy-900) 0%, var(--navy-800) 100%);
+        color: #fff; padding: 16px 24px; border-radius: 12px;
+        display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+        margin-bottom: 20px; box-shadow: 0 4px 14px rgba(10,30,51,0.22);
+    }
+    .app-topbar .app-title { font-size: 19px; font-weight: 800; letter-spacing: -0.01em; }
+    .app-topbar .app-sub { font-size: 12px; color: #9fb0c3; margin-top: 3px; letter-spacing: .02em; }
+    .status-chip {
+        display: inline-flex; align-items: center; gap: 7px;
+        background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2);
+        padding: 6px 14px; border-radius: 999px; font-size: 11.5px; font-weight: 700;
+        color: #d7f7e5; text-transform: uppercase; letter-spacing: .05em;
+    }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; display: inline-block;
+                  box-shadow: 0 0 0 3px rgba(34,197,94,0.18); }
+
+    /* -- Sidebar -- */
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, var(--navy-900) 0%, #0d2540 100%);
+        border-right: 1px solid rgba(255,255,255,0.06);
+    }
+    section[data-testid="stSidebar"] * { color: #dbe4ee; }
+    section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {
+        color: #ffffff !important; border-left: none !important; padding-left: 0 !important;
+    }
+    section[data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.12) !important; }
+    section[data-testid="stSidebar"] input[type="radio"] { accent-color: var(--accent); }
+    section[data-testid="stSidebar"] div[role="radiogroup"] label {
+        display: block; padding: 8px 10px; border-radius: 8px; margin-bottom: 2px; transition: background .15s;
+    }
+    section[data-testid="stSidebar"] div[role="radiogroup"] label:hover { background: rgba(255,255,255,0.06); }
+    section[data-testid="stSidebar"] button {
+        background: rgba(255,255,255,0.06) !important; border: 1px solid rgba(255,255,255,0.2) !important;
+        color: #e8edf3 !important; font-weight: 600 !important;
+    }
+    section[data-testid="stSidebar"] button:hover {
+        background: var(--accent) !important; border-color: var(--accent) !important; color: #fff !important;
+    }
+
+    /* -- Buttons (main area) -- */
+    button[kind="primary"], button[data-testid="baseButton-primary"] {
+        background-color: var(--accent) !important; border-color: var(--accent) !important; font-weight: 700 !important;
+    }
+    button[kind="primary"]:hover, button[data-testid="baseButton-primary"]:hover {
+        background-color: var(--accent-hover) !important; border-color: var(--accent-hover) !important;
+    }
+    button[kind="secondary"], button[data-testid="baseButton-secondary"] {
+        border-color: var(--border) !important; color: var(--navy-900) !important; font-weight: 600 !important;
+    }
+
+    /* -- Tabs -- */
+    button[data-baseweb="tab"] { font-weight: 600; color: var(--muted); }
+    button[data-baseweb="tab"][aria-selected="true"] { color: var(--navy-900) !important; }
+    div[data-baseweb="tab-highlight"] { background-color: var(--accent) !important; }
+
+    /* -- Tables / dataframes -- */
+    div[data-testid="stDataFrame"] { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+
+    /* -- Flags -- */
+    .flag-pass { background:#f0fdf4; border-left:4px solid #16a34a; padding:10px 14px; border-radius:8px; margin:6px 0; color:#14532d !important; font-size:13px; box-shadow:0 1px 2px rgba(15,23,42,0.04); }
+    .flag-warn { background:#fffbeb; border-left:4px solid #d97706; padding:10px 14px; border-radius:8px; margin:6px 0; color:#78350f !important; font-size:13px; box-shadow:0 1px 2px rgba(15,23,42,0.04); }
+    .flag-fail { background:#fef2f2; border-left:4px solid #dc2626; padding:10px 14px; border-radius:8px; margin:6px 0; color:#7f1d1d !important; font-size:13px; box-shadow:0 1px 2px rgba(15,23,42,0.04); }
+    .flag-info { background:#eff6ff; border-left:4px solid #3b82f6; padding:10px 14px; border-radius:8px; margin:6px 0; color:#1e3a8a !important; font-size:13px; box-shadow:0 1px 2px rgba(15,23,42,0.04); }
     .flag-pass b, .flag-warn b, .flag-fail b, .flag-info b { font-size:15px; }
-    .bm-card   { background:white; border-radius:10px; padding:16px 20px; border:1px solid #e2e8f0; margin-bottom:12px; }
-    .bm-label  { font-size:11px; font-weight:600; color:#64748b; text-transform:uppercase; letter-spacing:.05em; }
-    .bm-value  { font-size:22px; font-weight:700; color:#0f4c81; line-height:1.2; }
+
+    /* -- Benchmark cards -- */
+    .bm-card   { background:white; border-radius:10px; padding:16px 20px; border:1px solid var(--border); margin-bottom:12px; box-shadow:0 1px 3px rgba(15,23,42,0.06); }
+    .bm-label  { font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+    .bm-value  { font-size:22px; font-weight:700; color:var(--navy-800); line-height:1.2; }
     .bm-sub    { font-size:12px; color:#94a3b8; margin-top:2px; }
     .success-box { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:12px 16px; margin:8px 0; }
 </style>
@@ -836,7 +916,7 @@ def make_pie(labels, values, title):
         hovertemplate="<b>%{label}</b><br>%{value} kWh/m²·yr<br>%{percent}<extra></extra>",
     ))
     fig.update_layout(
-        title=dict(text=title, font=dict(size=13, color="#0f4c81")),
+        title=dict(text=title, font=dict(size=13, color="#123a5e")),
         showlegend=True, legend=dict(orientation="v", x=1.02, y=0.5, font=dict(size=11)),
         margin=dict(t=40,b=10,l=10,r=10), height=320,
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -879,8 +959,8 @@ def build_pdf_report(meta, kpis, bm, flags, pct, comparison_df):
         title=f"QA/QC Report - {meta['project_name'] or 'Project'}",
     )
     styles = getSampleStyleSheet()
-    h1    = ParagraphStyle("h1", parent=styles["Heading1"], textColor=colors.HexColor("#0f4c81"), fontSize=17, spaceAfter=2)
-    h2    = ParagraphStyle("h2", parent=styles["Heading2"], textColor=colors.HexColor("#0f4c81"), fontSize=12, spaceBefore=8, spaceAfter=4)
+    h1    = ParagraphStyle("h1", parent=styles["Heading1"], textColor=colors.HexColor("#123a5e"), fontSize=17, spaceAfter=2)
+    h2    = ParagraphStyle("h2", parent=styles["Heading2"], textColor=colors.HexColor("#123a5e"), fontSize=12, spaceBefore=8, spaceAfter=4)
     body  = styles["BodyText"]
     small = ParagraphStyle("small", parent=body, fontSize=9, textColor=colors.HexColor("#64748b"))
     cell  = ParagraphStyle("cell", parent=body, fontSize=8, leading=10)
@@ -930,7 +1010,7 @@ def build_pdf_report(meta, kpis, bm, flags, pct, comparison_df):
     ]
     t = Table(summ, hAlign="LEFT", colWidths=[7*cm, 4*cm, 5*cm])
     t.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f4c81")),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#123a5e")),
         ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
         ("FONTSIZE",   (0, 0), (-1, -1), 9),
         ("GRID",       (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
@@ -959,7 +1039,7 @@ def build_pdf_report(meta, kpis, bm, flags, pct, comparison_df):
         ct = Table(data, hAlign="LEFT", repeatRows=1,
                    colWidths=[4.0*cm, 2.0*cm, 2.4*cm, 1.5*cm, 1.7*cm, 1.7*cm, 4.0*cm])
         ct.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f4c81")),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#123a5e")),
             ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
             ("FONTSIZE",   (0, 0), (-1, -1), 8),
             ("GRID",       (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
@@ -994,20 +1074,54 @@ CITIES             = sorted(set(k[1] for k in BENCHMARKS)) or ["Edmonton","Calga
 CLIMATE_ZONES      = sorted(set(k[2] for k in BENCHMARKS)) or ["4","5","6","7","8"]
 # Subtypes derived dynamically per selection in Step 3
 
+# ── Top banner ────────────────────────────────────────────────────────────────
+_page_labels = {
+    "QA/QC Tool": "QA/QC Tool",
+    "📚 Benchmark Explorer": "Benchmark Explorer",
+    "⚙️ Manage Benchmarks": "Manage Benchmarks",
+}
+st.markdown(f"""
+<div class="app-topbar">
+  <div>
+    <div class="app-title">⚡ Energy Model Benchmarking &amp; QA/QC Platform</div>
+    <div class="app-sub">Buildings Practice &middot; IES VE &middot; EnergyPlus &middot; OpenStudio</div>
+  </div>
+  <div class="status-chip"><span class="status-dot"></span> Live &middot; {len(BENCHMARKS)} benchmarks loaded</div>
+</div>
+""", unsafe_allow_html=True)
+
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## ⚡ Energy Benchmarking")
-    st.markdown("**QA/QC Platform** | MVP v1.0")
+    st.markdown("""
+    <div style="padding:2px 0 14px 0;">
+      <div style="font-size:19px;font-weight:800;color:#fff;letter-spacing:-0.01em;">⚡ Energy Benchmarking</div>
+      <div style="font-size:12px;color:#9fb0c3;margin-top:3px;">QA/QC Platform &middot; MVP v1.0</div>
+    </div>
+    """, unsafe_allow_html=True)
     st.divider()
     page = st.radio("Navigate", ["QA/QC Tool", "📚 Benchmark Explorer", "⚙️ Manage Benchmarks"], label_visibility="collapsed")
     st.session_state.page = page
     st.divider()
     if page == "QA/QC Tool":
-        steps = ["1. Upload / Enter Data","2. Map Columns","3. Building Info","4. Results"]
+        steps = ["Upload / Enter Data","Map Columns","Building Info","Results"]
+        step_html = '<div style="display:flex;flex-direction:column;gap:9px;margin:2px 0 10px 0;">'
         for i, s in enumerate(steps, 1):
-            if i < st.session_state.step:    st.markdown(f"✅ {s}")
-            elif i == st.session_state.step:  st.markdown(f"**→ {s}**")
-            else:                             st.markdown(f"&nbsp;&nbsp;&nbsp;{s}")
+            if i < st.session_state.step:
+                circle_bg, circle_fg, text_color, label, weight = "#1a7a4a", "#fff", "#8fd9b3", "✓", "500"
+            elif i == st.session_state.step:
+                circle_bg, circle_fg, text_color, label, weight = "#e2542e", "#fff", "#ffffff", str(i), "700"
+            else:
+                circle_bg, circle_fg, text_color, label, weight = "rgba(255,255,255,0.08)", "#7c8ba1", "#7c8ba1", str(i), "500"
+            step_html += (
+                '<div style="display:flex;align-items:center;gap:10px;">'
+                f'<div style="width:24px;height:24px;border-radius:50%;background:{circle_bg};color:{circle_fg};'
+                'display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">'
+                f'{label}</div>'
+                f'<span style="font-size:13px;font-weight:{weight};color:{text_color};">{s}</span>'
+                '</div>'
+            )
+        step_html += '</div>'
+        st.markdown(step_html, unsafe_allow_html=True)
         st.divider()
         if st.button("🔄 Start Over", use_container_width=True):
             for k in ["step","vals","results","headers","csv_df","mapping","meta","ref_csv_df","ref_vals","compliance_code"]:
@@ -1220,7 +1334,7 @@ elif st.session_state.page == "📚 Benchmark Explorer":
                     hovertemplate="<b>%{label}</b><br>%{value} kWh/m²·yr<br>%{percent}<extra></extra>",
                 ))
                 fig_src.update_layout(
-                    title=dict(text=f"Energy Source Split — {btype} · {bcity}{subtype_label}", font=dict(size=13,color="#0f4c81")),
+                    title=dict(text=f"Energy Source Split — {btype} · {bcity}{subtype_label}", font=dict(size=13,color="#123a5e")),
                     showlegend=True, legend=dict(orientation="v",x=1.02,y=0.5,font=dict(size=11)),
                     margin=dict(t=40,b=10,l=10,r=10), height=320,
                     paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -1240,12 +1354,12 @@ elif st.session_state.page == "📚 Benchmark Explorer":
         bar_med_f    = [v for l,v in bar_pairs]
         fig_bar = go.Figure()
         fig_bar.add_trace(go.Bar(name="Median EUI", x=bar_labels_f, y=bar_med_f,
-                                 marker_color="#0f4c81", opacity=0.85,
+                                 marker_color="#123a5e", opacity=0.85,
                                  error_y=dict(type="data", symmetric=True,
                                               array=[round(v*0.15,1) for v in bar_med_f],
                                               color="#94a3b8", thickness=1.5, width=4)))
         fig_bar.update_layout(template="plotly_white", height=320,
-                              title=dict(text="End-Use Median EUI (bars show ±15% range)", font=dict(size=13,color="#0f4c81")),
+                              title=dict(text="End-Use Median EUI (bars show ±15% range)", font=dict(size=13,color="#123a5e")),
                               yaxis_title="EUI (kWh/m²·yr)", showlegend=False, margin=dict(t=40,b=10))
         st.plotly_chart(fig_bar, use_container_width=True)
 
@@ -1570,7 +1684,7 @@ else:
             color_eui = "#f0fdf4" if bm and kpis["total_eui"]<=bm["good_eui"] else "#fef2f2" if bm and kpis["total_eui"]>bm["high_eui"] else "#fffbeb"
             st.markdown(f'''<div style="background:{color_eui};border-radius:10px;padding:14px 16px;border:1px solid #e2e8f0">
                 <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Total EUI</div>
-                <div style="font-size:28px;font-weight:700;color:#0f4c81;line-height:1.1">{kpis["total_eui"]}</div>
+                <div style="font-size:28px;font-weight:700;color:#123a5e;line-height:1.1">{kpis["total_eui"]}</div>
                 <div style="font-size:12px;color:#64748b">kWh/m²·yr</div>
                 <div style="font-size:12px;color:#94a3b8;margin-top:4px">{delta_eui}</div>
             </div>''', unsafe_allow_html=True)
@@ -1585,7 +1699,7 @@ else:
                 tedi_sub = "No TEDI benchmark" if not has_tedi_bm else "TEDI not provided"
             st.markdown(f'''<div style="background:{color_tedi};border-radius:10px;padding:14px 16px;border:1px solid #e2e8f0">
                 <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em">TEDI</div>
-                <div style="font-size:28px;font-weight:700;color:#0f4c81;line-height:1.1">{tedi_val if tedi_val>0 else "—"}</div>
+                <div style="font-size:28px;font-weight:700;color:#123a5e;line-height:1.1">{tedi_val if tedi_val>0 else "—"}</div>
                 <div style="font-size:12px;color:#64748b">kWh/m²·yr</div>
                 <div style="font-size:12px;color:#94a3b8;margin-top:4px">{tedi_sub}</div>
             </div>''', unsafe_allow_html=True)
@@ -1595,7 +1709,7 @@ else:
                        if ghgi_val is not None else "Enter emission factors in Step 3"
             st.markdown(f'''<div style="background:#f8fafc;border-radius:10px;padding:14px 16px;border:1px solid #e2e8f0">
                 <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em">GHGI</div>
-                <div style="font-size:28px;font-weight:700;color:#0f4c81;line-height:1.1">{ghgi_val if ghgi_val is not None else "—"}</div>
+                <div style="font-size:28px;font-weight:700;color:#123a5e;line-height:1.1">{ghgi_val if ghgi_val is not None else "—"}</div>
                 <div style="font-size:12px;color:#64748b">kgCO₂e / m²·yr</div>
                 <div style="font-size:12px;color:#94a3b8;margin-top:4px">{ghgi_sub}</div>
             </div>''', unsafe_allow_html=True)
@@ -1650,10 +1764,10 @@ else:
                 bar_colors=["#16a34a" if v<=bm["good_eui"] else "#d97706" if v<=bm["median_eui"] else "#ea580c" if v<=bm["high_eui"] else "#dc2626" for v in sorted_pcts]
                 fig_pct=go.Figure(go.Bar(x=[f"{i*10}th" for i in range(1,11)],y=sorted_pcts,marker_color=bar_colors,
                     hovertemplate="<b>%{x} percentile</b><br>EUI: %{y} kWh/m²·yr<extra></extra>"))
-                fig_pct.add_hline(y=kpis["total_eui"],line_dash="dash",line_color="#0f4c81",line_width=2.5,
-                    annotation_text=f"  Your model: {kpis['total_eui']}",annotation_font=dict(color="#0f4c81",size=12))
+                fig_pct.add_hline(y=kpis["total_eui"],line_dash="dash",line_color="#123a5e",line_width=2.5,
+                    annotation_text=f"  Your model: {kpis['total_eui']}",annotation_font=dict(color="#123a5e",size=12))
                 fig_pct.update_layout(template="plotly_white",height=320,
-                    title=dict(text="Where does your building rank? (lower = better)",font=dict(size=13,color="#0f4c81")),
+                    title=dict(text="Where does your building rank? (lower = better)",font=dict(size=13,color="#123a5e")),
                     xaxis_title="Percentile rank of similar buildings",yaxis_title="EUI (kWh/m²·yr)",margin=dict(t=45,b=10))
                 st.plotly_chart(fig_pct,use_container_width=True)
 
@@ -1677,13 +1791,13 @@ else:
             pct_labels = [f"{(y-m)/m*100:+.0f}%" if m else "" for y, m in zip(your_eu, bm_med)]
             fig_cmp.add_trace(go.Bar(
                 name="Your Model", x=eu_l2, y=your_eu,
-                marker_color="#0f4c81",
-                text=pct_labels, textposition="outside", textfont=dict(size=11, color="#0f4c81"),
+                marker_color="#123a5e",
+                text=pct_labels, textposition="outside", textfont=dict(size=11, color="#123a5e"),
                 cliponaxis=False,
             ))
             fig_cmp.update_layout(
                 barmode="group", template="plotly_white", height=340,
-                title=dict(text="Your Model vs Benchmark Median (labels = % vs median, error bars = ±15%)", font=dict(size=13,color="#0f4c81")),
+                title=dict(text="Your Model vs Benchmark Median (labels = % vs median, error bars = ±15%)", font=dict(size=13,color="#123a5e")),
                 yaxis_title="EUI (kWh/m²·yr)",
                 legend=dict(orientation="h", y=-0.25), margin=dict(t=50,b=10)
             )
