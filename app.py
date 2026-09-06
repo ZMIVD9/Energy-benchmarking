@@ -1,12 +1,3 @@
-"""
-Energy Model Benchmarking & QA/QC Platform
-===========================================
-Run:  streamlit run app.py
-Deps: pip install streamlit pandas plotly openpyxl reportlab
-
-IMPORTANT: Keep benchmarks.xlsx in the same folder as app.py
-"""
-
 import io
 import os
 import streamlit as st
@@ -18,68 +9,94 @@ from datetime import date
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Energy Benchmarking Platform",
-    page_icon="⚡",
+    page_icon="🟧",   # Lens-tag stand-in; swap for assets/stantec_logo.png if preferred
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,400&family=Roboto:ital,wght@0,300;0,400;0,500;0,700;1,400&family=Roboto+Condensed:wght@400;500;700&display=swap');
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   STANTEC VISUAL IDENTITY — colour tokens
+   Sampled from "Visuele identiteit & ontwerprichtlijnen" (kleurenpalet, p.15)
+
+   Hoofdkleuren    Wit #FFFFFF · Mist #F2EFEC · Kiezelsteen #E2DDDB
+                   Fossiel #C9C4BD · Zwart #000000 · Stantec-oranje #ED6631
+   Secundair       Fern #1A845C · Marine #2A73D9 · Kurkuma #F3BE0A
+                   Himalayazout #F4B5B5
+
+   Rules applied:  white space carries the layout; orange is the house colour
+                   and stays prominent (lens-tag, buttons, accents); text is
+                   black or white only; primary colours are used at full
+                   strength — tints appear only in data visualisation.
+   ═══════════════════════════════════════════════════════════════════════════ */
 :root{
-  --bg-0:#0E1117; --bg-1:#161B22; --card:#1E2530; --side:#101827;
-  --blue:#0078D4; --cyan:#18B6F6; --ok:#32D583; --warn:#F79009; --err:#F04438;
-  --tx:#FFFFFF; --tx2:#B8C2CC; --tx3:#7D8894;
-  --bd:rgba(255,255,255,0.08); --bd2:rgba(255,255,255,0.14); --hov:rgba(255,255,255,0.05);
-  --r:14px;
+  /* Hoofdkleuren */
+  --white:#FFFFFF; --mist:#F2EFEC; --pebble:#E2DDDB; --fossil:#C9C4BD;
+  --black:#000000; --orange:#ED6631;
+  /* Secundaire kleuren */
+  --fern:#1A845C; --marine:#2A73D9; --kurkuma:#F3BE0A; --salt:#F4B5B5;
+
+  /* Surfaces */
+  --bg-0:var(--white); --bg-1:var(--mist); --card:var(--white); --side:var(--mist);
+
+  /* Semantic status — Fern / Kurkuma / Marine come straight from the palette.
+     --err is a functional alert colour: the brand palette carries no red. */
+  --ok:var(--fern); --warn:var(--kurkuma); --info:var(--marine); --err:#B3261E;
+
+  /* Text — black on light, per the WCAG table in the guidelines */
+  --tx:#000000; --tx2:#26221F; --tx3:#5F5850;
+
+  --bd:#DED8D3; --bd2:#C9C4BD; --hov:rgba(0,0,0,0.04);
+  --r:4px;                       /* the identity is square-cornered, not pill-soft */
+  --serif:'Source Serif 4',Georgia,'Times New Roman',serif;
+  --sans:'Roboto',Arial,-apple-system,'Segoe UI',system-ui,sans-serif;
+  --cond:'Roboto Condensed','Arial Narrow',Arial,sans-serif;
 }
 
-/* ── Canvas: blueprint grid + radial lighting ───────────────────────── */
-.stApp{
-  background-color:var(--bg-0);
-  background-image:
-    radial-gradient(900px 480px at 78% -8%, rgba(0,120,212,0.16), transparent 60%),
-    radial-gradient(700px 420px at 8% 4%, rgba(24,182,246,0.09), transparent 60%),
-    linear-gradient(rgba(255,255,255,0.022) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.022) 1px, transparent 1px);
-  background-size:100% 100%,100% 100%,44px 44px,44px 44px;
-  background-attachment:fixed;
-}
+/* ── Canvas ─────────────────────────────────────────────────────────── */
+/* White space is the foundation of the identity — the canvas stays white and
+   the warm greys are used only on cards, the sidebar and section fields. */
+.stApp{background-color:var(--white)}
 .main .block-container{padding-top:1.1rem; padding-bottom:3rem; max-width:1500px;}
 html,body,[class*="css"],.stApp,p,li,span,label,div,input,select,textarea,button{
-  font-family:'Inter',-apple-system,'Segoe UI',system-ui,sans-serif;
+  font-family:var(--sans);
 }
 ::-webkit-scrollbar{width:10px;height:10px}
-::-webkit-scrollbar-track{background:var(--bg-0)}
-::-webkit-scrollbar-thumb{background:#2A3341;border-radius:8px;border:2px solid var(--bg-0)}
-::-webkit-scrollbar-thumb:hover{background:#38455A}
+::-webkit-scrollbar-track{background:var(--mist)}
+::-webkit-scrollbar-thumb{background:var(--fossil);border-radius:0;border:2px solid var(--mist)}
+::-webkit-scrollbar-thumb:hover{background:#ADA79F}
 
 /* ── Typography ─────────────────────────────────────────────────────── */
-h1,h2,h3,h4,h5{color:var(--tx)!important;letter-spacing:-0.02em;font-family:'Inter',sans-serif!important}
-h1{font-size:32px!important;font-weight:800!important;margin-bottom:.15rem!important}
-h2{font-size:24px!important;font-weight:700!important}
-h3{font-size:18px!important;font-weight:700!important}
-h4{font-size:15px!important;font-weight:600!important;color:var(--tx2)!important}
-p,li,label,.stMarkdown{color:var(--tx2);font-size:15px;line-height:1.62}
+/* Source Serif 4 for titles and headings, Roboto for everything else. */
+h1,h2,h3,h4,h5{color:var(--tx)!important;letter-spacing:-0.005em;font-family:var(--serif)!important}
+h1{font-size:34px!important;font-weight:700!important;margin-bottom:.15rem!important;line-height:1.15!important}
+h2{font-size:25px!important;font-weight:700!important}
+h3{font-size:19px!important;font-weight:600!important}
+h4{font-size:15px!important;font-weight:600!important;color:var(--tx)!important;font-family:var(--sans)!important}
+p,li,label,.stMarkdown{color:var(--tx2);font-size:15px;line-height:1.62;font-weight:400}
 .stCaption,[data-testid="stCaptionContainer"],[data-testid="stCaptionContainer"] p{color:var(--tx3)!important;font-size:13px!important}
 small{color:var(--tx3)}
-strong,b{color:var(--tx)}
-code{background:#0B0E14!important;color:var(--cyan)!important;border:1px solid var(--bd);
-     border-radius:6px;padding:1px 6px;font-size:13px}
-a{color:var(--cyan)!important;text-decoration:none}
-a:hover{text-decoration:underline}
+strong,b{color:var(--tx);font-weight:700}
+code{background:var(--mist)!important;color:var(--tx)!important;border:1px solid var(--bd);
+     border-radius:2px;padding:1px 6px;font-size:13px}
+a{color:var(--tx)!important;text-decoration:underline;text-decoration-color:var(--orange);
+  text-underline-offset:3px;text-decoration-thickness:2px}
+a:hover{color:var(--orange)!important}
 hr{border:none!important;border-top:1px solid var(--bd)!important;margin:1.5rem 0!important}
-[data-testid="stMarkdownContainer"] table{border:1px solid var(--bd);border-radius:10px;overflow:hidden;
+[data-testid="stMarkdownContainer"] table{border:1px solid var(--bd);border-radius:0;overflow:hidden;
      border-collapse:separate;border-spacing:0;font-size:13px}
-[data-testid="stMarkdownContainer"] th{background:#131A24!important;color:var(--tx2)!important;
-     font-weight:600!important;border-bottom:1px solid var(--bd)!important;padding:8px 12px!important}
+[data-testid="stMarkdownContainer"] th{background:var(--mist)!important;color:var(--tx)!important;
+     font-weight:700!important;border-bottom:1px solid var(--bd)!important;padding:8px 12px!important;
+     text-transform:uppercase;letter-spacing:.06em;font-size:11px!important}
 [data-testid="stMarkdownContainer"] td{color:var(--tx2)!important;border-bottom:1px solid var(--bd)!important;padding:8px 12px!important}
 
 /* ── Motion ─────────────────────────────────────────────────────────── */
 @keyframes riseIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
-@keyframes pulseDot{0%,100%{box-shadow:0 0 0 0 rgba(50,213,131,.5)}70%{box-shadow:0 0 0 7px rgba(50,213,131,0)}}
+@keyframes pulseDot{0%,100%{box-shadow:0 0 0 0 rgba(26,132,92,.45)}70%{box-shadow:0 0 0 7px rgba(26,132,92,0)}}
 @keyframes flowLine{to{background-position:200% 0}}
 @keyframes shimmer{0%{background-position:-500px 0}100%{background-position:500px 0}}
 .rise{animation:riseIn .45s cubic-bezier(.22,1,.36,1) both}
@@ -89,287 +106,332 @@ hr{border:none!important;border-top:1px solid var(--bd)!important;margin:1.5rem 
 /* ── Top header ─────────────────────────────────────────────────────── */
 .ei-header{
   display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;
-  background:linear-gradient(135deg,rgba(30,37,48,.94),rgba(16,24,39,.94));
-  border:1px solid var(--bd);border-radius:16px;padding:14px 22px;margin-bottom:18px;
-  backdrop-filter:blur(18px);box-shadow:0 8px 30px rgba(0,0,0,.42);
+  background:var(--white);
+  border:1px solid var(--bd);border-top:3px solid var(--orange);border-radius:0;
+  padding:15px 22px;margin-bottom:18px;
+  box-shadow:0 1px 3px rgba(0,0,0,.06);
   animation:riseIn .5s cubic-bezier(.22,1,.36,1) both;
 }
 .ei-brand{display:flex;align-items:center;gap:13px}
-.ei-mark{width:40px;height:40px;flex-shrink:0;filter:drop-shadow(0 3px 10px rgba(0,120,212,.5))}
-.ei-name{font-size:19px;font-weight:800;color:#fff;letter-spacing:-.025em;line-height:1.15}
-.ei-tag{font-size:11px;color:var(--tx3);letter-spacing:.14em;text-transform:uppercase;margin-top:2px;font-weight:600}
+.ei-mark{width:40px;height:40px;flex-shrink:0}
+.ei-name{font-family:var(--serif);font-size:21px;font-weight:700;color:var(--tx);letter-spacing:-.01em;line-height:1.15}
+.ei-tag{font-size:10.5px;color:var(--tx3);letter-spacing:.14em;text-transform:uppercase;margin-top:3px;font-weight:700;font-family:var(--cond)}
 .ei-hactions{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
 .ei-pill{
-  display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:999px;
-  border:1px solid var(--bd2);background:rgba(255,255,255,.045);
-  font-size:11.5px;font-weight:700;color:var(--tx2);letter-spacing:.05em;text-transform:uppercase;
-  transition:all .22s ease;white-space:nowrap;
+  display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:2px;
+  border:1px solid var(--bd2);background:var(--white);
+  font-size:11px;font-weight:700;color:var(--tx2);letter-spacing:.06em;text-transform:uppercase;
+  transition:all .22s ease;white-space:nowrap;font-family:var(--cond);
 }
-.ei-pill:hover{background:var(--hov);border-color:rgba(255,255,255,.24);transform:translateY(-1px)}
-.ei-pill.live{color:#B4F0D2;border-color:rgba(50,213,131,.42);background:rgba(50,213,131,.10)}
-.ei-pill.ver{color:var(--cyan);border-color:rgba(24,182,246,.34);background:rgba(24,182,246,.09)}
-.ei-dot{width:7px;height:7px;border-radius:50%;background:var(--ok);animation:pulseDot 2.4s infinite}
-.ei-ico{width:34px;height:34px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;
-  border:1px solid var(--bd);background:rgba(255,255,255,.035);color:var(--tx2);transition:all .22s ease;cursor:default}
-.ei-ico:hover{background:var(--hov);color:#fff;border-color:var(--bd2);transform:translateY(-1px)}
-.ei-avatar{width:34px;height:34px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;
-  background:linear-gradient(135deg,var(--blue),var(--cyan));color:#fff;font-weight:800;font-size:12.5px;
-  box-shadow:0 3px 12px rgba(0,120,212,.45)}
+.ei-pill:hover{background:var(--mist);border-color:var(--tx3)}
+.ei-pill.live{color:var(--tx);border-color:var(--fern);background:var(--white)}
+.ei-pill.ver{color:var(--black);border-color:transparent;background:var(--orange)}
+.ei-dot{width:7px;height:7px;border-radius:50%;background:var(--fern);animation:pulseDot 2.4s infinite}
+.ei-ico{width:33px;height:33px;border-radius:2px;display:inline-flex;align-items:center;justify-content:center;
+  border:1px solid var(--bd);background:var(--white);color:var(--tx2);transition:all .22s ease;cursor:default}
+.ei-ico:hover{background:var(--mist);color:var(--black);border-color:var(--bd2)}
+.ei-avatar{width:33px;height:33px;border-radius:2px;display:inline-flex;align-items:center;justify-content:center;
+  background:var(--orange);color:var(--black);font-weight:700;font-size:12.5px;font-family:var(--cond);letter-spacing:.04em}
 
 /* ── Page title block ───────────────────────────────────────────────── */
 .ei-page{margin:2px 0 18px 0;animation:riseIn .5s cubic-bezier(.22,1,.36,1) both}
-.ei-crumb{font-size:11.5px;color:var(--tx3);letter-spacing:.1em;text-transform:uppercase;font-weight:600;margin-bottom:7px}
-.ei-crumb span{color:var(--cyan)}
-.ei-h1{font-size:34px;font-weight:800;color:#fff;letter-spacing:-.03em;line-height:1.14}
-.ei-sub{font-size:15px;color:var(--tx2);margin-top:7px;max-width:820px;line-height:1.6}
+.ei-crumb{font-size:11px;color:var(--tx3);letter-spacing:.12em;text-transform:uppercase;font-weight:700;
+  margin-bottom:9px;font-family:var(--cond)}
+.ei-crumb span{color:var(--orange)}
+.ei-h1{font-family:var(--serif);font-size:38px;font-weight:700;color:var(--tx);letter-spacing:-.01em;line-height:1.14}
+.ei-sub{font-size:15px;color:var(--tx2);margin-top:9px;max-width:820px;line-height:1.6}
 
 /* ── Section header ─────────────────────────────────────────────────── */
-.ei-sec{display:flex;align-items:center;gap:11px;margin:26px 0 13px 0}
-.ei-sec-bar{width:3px;height:20px;border-radius:3px;background:linear-gradient(180deg,var(--cyan),var(--blue))}
-.ei-sec-t{font-size:19px;font-weight:700;color:#fff;letter-spacing:-.015em}
+.ei-sec{display:flex;align-items:center;gap:11px;margin:26px 0 13px 0;
+  padding-bottom:9px;border-bottom:1px solid var(--bd)}
+.ei-sec-bar{width:4px;height:21px;border-radius:0;background:var(--orange)}
+.ei-sec-t{font-family:var(--serif);font-size:20px;font-weight:700;color:var(--tx);letter-spacing:-.005em}
 .ei-sec-d{font-size:13px;color:var(--tx3);margin-left:2px}
 
 /* ── Cards ──────────────────────────────────────────────────────────── */
 .ei-card{
-  background:linear-gradient(160deg,rgba(30,37,48,.92),rgba(22,27,34,.92));
+  background:var(--white);
   border:1px solid var(--bd);border-radius:var(--r);padding:18px 20px;
-  box-shadow:0 4px 20px rgba(0,0,0,.30);transition:all .26s cubic-bezier(.22,1,.36,1);height:100%;
+  box-shadow:0 1px 3px rgba(0,0,0,.05);transition:all .26s cubic-bezier(.22,1,.36,1);height:100%;
 }
-.ei-card:hover{border-color:rgba(24,182,246,.34);transform:translateY(-2px);box-shadow:0 12px 34px rgba(0,0,0,.46)}
+.ei-card:hover{border-color:var(--fossil);box-shadow:0 6px 18px rgba(0,0,0,.09);transform:translateY(-2px)}
 
-/* KPI card (Power BI style) */
+/* KPI card — warm-grey field, orange rule on top */
 .kpi{
   position:relative;overflow:hidden;
-  background:linear-gradient(160deg,rgba(30,37,48,.94),rgba(22,27,34,.94));
+  background:var(--mist);
   border:1px solid var(--bd);border-radius:var(--r);padding:16px 18px 14px 18px;
-  box-shadow:0 4px 20px rgba(0,0,0,.30);transition:all .26s cubic-bezier(.22,1,.36,1);height:100%;
+  box-shadow:none;transition:all .26s cubic-bezier(.22,1,.36,1);height:100%;
 }
-.kpi:hover{transform:translateY(-3px);border-color:rgba(24,182,246,.36);box-shadow:0 14px 36px rgba(0,0,0,.5)}
-.kpi::after{content:'';position:absolute;top:0;left:0;right:0;height:2px;
-  background:linear-gradient(90deg,var(--accent-c,var(--cyan)),transparent 78%);opacity:.85}
+.kpi:hover{transform:translateY(-3px);border-color:var(--fossil);box-shadow:0 8px 22px rgba(0,0,0,.10)}
+.kpi::after{content:'';position:absolute;top:0;left:0;right:0;height:3px;
+  background:var(--accent-c,var(--orange));opacity:1}
 .kpi-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:9px}
-.kpi-l{font-size:11px;font-weight:700;color:var(--tx3);text-transform:uppercase;letter-spacing:.1em;line-height:1.35}
-.kpi-i{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0;
-  background:var(--accent-bg,rgba(24,182,246,.13));color:var(--accent-c,var(--cyan));border:1px solid var(--accent-bd,rgba(24,182,246,.24))}
-.kpi-v{font-size:42px;font-weight:800;color:#fff;line-height:1;letter-spacing:-.035em;font-variant-numeric:tabular-nums}
+.kpi-l{font-size:11px;font-weight:700;color:var(--tx3);text-transform:uppercase;letter-spacing:.1em;
+  line-height:1.35;font-family:var(--cond)}
+.kpi-i{width:30px;height:30px;border-radius:2px;display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  background:var(--white);color:var(--accent-c,var(--orange));border:1px solid var(--bd)}
+.kpi-v{font-family:var(--serif);font-size:42px;font-weight:700;color:var(--tx);line-height:1;
+  letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .kpi-v.sm{font-size:32px}
-.kpi-u{font-size:12px;color:var(--tx3);font-weight:600;margin-left:6px;letter-spacing:.01em}
+.kpi-u{font-family:var(--sans);font-size:12px;color:var(--tx3);font-weight:500;margin-left:6px;letter-spacing:.01em}
 .kpi-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;
   padding-top:9px;border-top:1px solid var(--bd)}
 .kpi-cmp{font-size:11.5px;color:var(--tx3);line-height:1.4}
 .kpi-trend{font-size:11.5px;font-weight:700;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 
 /* ── Status pills ───────────────────────────────────────────────────── */
-.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;
-  font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:2px;
+  font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;white-space:nowrap;
+  font-family:var(--cond)}
 .pill i{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
-.pill.ok{color:#7BE7B0;background:rgba(50,213,131,.13);border:1px solid rgba(50,213,131,.32)}
-.pill.info{color:#8FD4FA;background:rgba(24,182,246,.13);border:1px solid rgba(24,182,246,.32)}
-.pill.warn{color:#FBC66B;background:rgba(247,144,9,.13);border:1px solid rgba(247,144,9,.32)}
-.pill.err{color:#FB9A93;background:rgba(240,68,56,.13);border:1px solid rgba(240,68,56,.32)}
-.pill.idle{color:var(--tx3);background:rgba(255,255,255,.05);border:1px solid var(--bd)}
+.pill.ok{color:var(--black);background:var(--white);border:1px solid var(--fern);box-shadow:inset 3px 0 0 var(--fern)}
+.pill.info{color:var(--black);background:var(--white);border:1px solid var(--marine);box-shadow:inset 3px 0 0 var(--marine)}
+.pill.warn{color:var(--black);background:var(--white);border:1px solid var(--kurkuma);box-shadow:inset 3px 0 0 var(--kurkuma)}
+.pill.err{color:var(--black);background:var(--white);border:1px solid var(--err);box-shadow:inset 3px 0 0 var(--err)}
+.pill.idle{color:var(--tx3);background:var(--mist);border:1px solid var(--bd)}
 
 /* ── Workflow stepper ───────────────────────────────────────────────── */
 .wf{display:flex;align-items:stretch;gap:0;margin:6px 0 20px 0;flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px}
-.wf-s{flex:1 1 0;min-width:132px;background:linear-gradient(160deg,rgba(30,37,48,.9),rgba(22,27,34,.9));
-  border:1px solid var(--bd);border-radius:12px;padding:13px 14px;transition:all .28s cubic-bezier(.22,1,.36,1)}
-.wf-s:hover{transform:translateY(-2px);border-color:var(--bd2)}
-.wf-s.done{border-color:rgba(50,213,131,.30);background:linear-gradient(160deg,rgba(50,213,131,.07),rgba(22,27,34,.9))}
-.wf-s.act{border-color:rgba(0,120,212,.55);background:linear-gradient(160deg,rgba(0,120,212,.15),rgba(22,27,34,.94));
-  box-shadow:0 0 0 1px rgba(0,120,212,.28),0 10px 30px rgba(0,120,212,.20)}
-.wf-n{width:25px;height:25px;border-radius:8px;display:flex;align-items:center;justify-content:center;
-  font-size:11.5px;font-weight:800;margin-bottom:9px;border:1px solid var(--bd);
-  background:rgba(255,255,255,.05);color:var(--tx3)}
-.wf-s.done .wf-n{background:rgba(50,213,131,.16);color:#7BE7B0;border-color:rgba(50,213,131,.36)}
-.wf-s.act .wf-n{background:linear-gradient(135deg,var(--blue),var(--cyan));color:#fff;border-color:transparent;
-  box-shadow:0 3px 12px rgba(0,120,212,.5)}
-.wf-t{font-size:12.5px;font-weight:700;color:var(--tx2);letter-spacing:-.01em;line-height:1.3}
-.wf-s.act .wf-t{color:#fff}
+.wf-s{flex:1 1 0;min-width:132px;background:var(--white);
+  border:1px solid var(--bd);border-radius:var(--r);padding:13px 14px;transition:all .28s cubic-bezier(.22,1,.36,1)}
+.wf-s:hover{transform:translateY(-2px);border-color:var(--fossil)}
+.wf-s.done{border-color:var(--fern);background:var(--white)}
+.wf-s.act{border-color:var(--orange);background:var(--orange);
+  box-shadow:0 6px 18px rgba(237,102,49,.28)}
+.wf-n{width:25px;height:25px;border-radius:2px;display:flex;align-items:center;justify-content:center;
+  font-size:11.5px;font-weight:700;margin-bottom:9px;border:1px solid var(--bd);
+  background:var(--mist);color:var(--tx3);font-family:var(--cond)}
+.wf-s.done .wf-n{background:var(--fern);color:var(--white);border-color:var(--fern)}
+.wf-s.act .wf-n{background:var(--black);color:var(--white);border-color:var(--black)}
+.wf-t{font-size:12.5px;font-weight:700;color:var(--tx);letter-spacing:-.01em;line-height:1.3}
+.wf-s.act .wf-t{color:var(--black)}
 .wf-d{font-size:10.5px;color:var(--tx3);margin-top:3px;line-height:1.35}
+.wf-s.act .wf-d{color:var(--black);opacity:.72}
 .wf-c{flex:0 0 26px;display:flex;align-items:center;justify-content:center;min-width:26px}
-.wf-c i{display:block;width:100%;height:2px;border-radius:2px;background:var(--bd2)}
-.wf-c.on i{background:linear-gradient(90deg,var(--blue),var(--cyan),var(--blue));
+.wf-c i{display:block;width:100%;height:2px;border-radius:0;background:var(--bd2)}
+.wf-c.on i{background:linear-gradient(90deg,var(--orange),#F59A72,var(--orange));
   background-size:200% 100%;animation:flowLine 2.2s linear infinite}
 
-/* ── Validation feed (CI style) ─────────────────────────────────────── */
-.vf{border:1px solid var(--bd);border-radius:11px;padding:12px 15px;margin-bottom:8px;
-  display:flex;gap:12px;align-items:flex-start;transition:all .22s ease;
-  background:linear-gradient(160deg,rgba(30,37,48,.86),rgba(22,27,34,.86))}
-.vf:hover{border-color:var(--bd2);transform:translateX(2px)}
-.vf-b{width:3px;border-radius:3px;align-self:stretch;flex-shrink:0}
-.vf-i{width:22px;height:22px;border-radius:7px;display:flex;align-items:center;justify-content:center;
-  font-size:12px;font-weight:800;flex-shrink:0;margin-top:1px}
+/* ── Validation feed ────────────────────────────────────────────────── */
+.vf{border:1px solid var(--bd);border-radius:var(--r);padding:12px 15px;margin-bottom:8px;
+  display:flex;gap:12px;align-items:flex-start;transition:all .22s ease;background:var(--white)}
+.vf:hover{border-color:var(--fossil);transform:translateX(2px);box-shadow:0 3px 10px rgba(0,0,0,.06)}
+.vf-b{width:4px;border-radius:0;align-self:stretch;flex-shrink:0}
+.vf-i{width:22px;height:22px;border-radius:2px;display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:700;flex-shrink:0;margin-top:1px}
 .vf-body{flex:1;min-width:0}
 .vf-h{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:3px}
-.vf-cat{font-size:10.5px;font-weight:700;color:var(--tx3);text-transform:uppercase;letter-spacing:.09em}
+.vf-cat{font-size:10.5px;font-weight:700;color:var(--tx3);text-transform:uppercase;letter-spacing:.09em;font-family:var(--cond)}
 .vf-m{font-size:13.5px;color:var(--tx2);line-height:1.55}
 .vf.pass{border-left:none}
-.vf.pass .vf-b{background:var(--ok)} .vf.pass .vf-i{background:rgba(50,213,131,.15);color:#7BE7B0}
-.vf.warn .vf-b{background:var(--warn)} .vf.warn .vf-i{background:rgba(247,144,9,.15);color:#FBC66B}
-.vf.fail .vf-b{background:var(--err)} .vf.fail .vf-i{background:rgba(240,68,56,.15);color:#FB9A93}
-.vf.info .vf-b{background:var(--cyan)} .vf.info .vf-i{background:rgba(24,182,246,.15);color:#8FD4FA}
+.vf.pass .vf-b{background:var(--fern)} .vf.pass .vf-i{background:var(--fern);color:var(--white)}
+.vf.warn .vf-b{background:var(--kurkuma)} .vf.warn .vf-i{background:var(--kurkuma);color:var(--black)}
+.vf.fail .vf-b{background:var(--err)}    .vf.fail .vf-i{background:var(--err);color:var(--white)}
+.vf.info .vf-b{background:var(--marine)} .vf.info .vf-i{background:var(--marine);color:var(--white)}
 
 /* summary counters */
 .vsum{display:flex;gap:11px;flex-wrap:wrap;margin-bottom:14px}
-.vsum-c{flex:1;min-width:118px;border:1px solid var(--bd);border-radius:12px;padding:13px 16px;
-  background:linear-gradient(160deg,rgba(30,37,48,.9),rgba(22,27,34,.9));transition:all .24s ease}
-.vsum-c:hover{transform:translateY(-2px);border-color:var(--bd2)}
-.vsum-n{font-size:30px;font-weight:800;line-height:1;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
-.vsum-l{font-size:10.5px;font-weight:700;color:var(--tx3);text-transform:uppercase;letter-spacing:.1em;margin-top:6px}
+.vsum-c{flex:1;min-width:118px;border:1px solid var(--bd);border-radius:var(--r);padding:13px 16px;
+  background:var(--mist);transition:all .24s ease}
+.vsum-c:hover{transform:translateY(-2px);border-color:var(--fossil)}
+.vsum-n{font-family:var(--serif);font-size:30px;font-weight:700;line-height:1;letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums}
+.vsum-l{font-size:10.5px;font-weight:700;color:var(--tx3);text-transform:uppercase;letter-spacing:.1em;
+  margin-top:6px;font-family:var(--cond)}
 
 /* ── Upload dropzone ────────────────────────────────────────────────── */
-.dz{border:1.5px dashed rgba(24,182,246,.34);border-radius:16px;padding:30px 24px;text-align:center;
-  background:radial-gradient(560px 200px at 50% 0%,rgba(0,120,212,.12),transparent 70%),rgba(22,27,34,.62);
-  transition:all .3s cubic-bezier(.22,1,.36,1);margin-bottom:10px}
-.dz:hover{border-color:rgba(24,182,246,.65);background:radial-gradient(560px 200px at 50% 0%,rgba(0,120,212,.20),transparent 70%),rgba(22,27,34,.8);
-  box-shadow:0 0 0 4px rgba(0,120,212,.10),0 16px 44px rgba(0,0,0,.4);transform:translateY(-2px)}
-.dz-t{font-size:16.5px;font-weight:700;color:#fff;margin-top:11px;letter-spacing:-.01em}
+.dz{border:1.5px dashed var(--fossil);border-radius:var(--r);padding:30px 24px;text-align:center;
+  background:var(--mist);transition:all .3s cubic-bezier(.22,1,.36,1);margin-bottom:10px}
+.dz:hover{border-color:var(--orange);background:var(--pebble);
+  box-shadow:0 10px 30px rgba(0,0,0,.08);transform:translateY(-2px)}
+.dz-t{font-family:var(--serif);font-size:18px;font-weight:700;color:var(--tx);margin-top:11px}
 .dz-d{font-size:13px;color:var(--tx3);margin-top:5px}
 .dz-f{display:flex;gap:7px;justify-content:center;flex-wrap:wrap;margin-top:15px}
-.dz-f span{font-size:10.5px;font-weight:700;color:var(--tx2);padding:5px 11px;border-radius:7px;
-  border:1px solid var(--bd);background:rgba(255,255,255,.04);letter-spacing:.05em;transition:all .2s ease}
-.dz-f span:hover{border-color:rgba(24,182,246,.4);color:var(--cyan)}
+.dz-f span{font-size:10.5px;font-weight:700;color:var(--tx2);padding:5px 11px;border-radius:2px;
+  border:1px solid var(--bd);background:var(--white);letter-spacing:.06em;transition:all .2s ease;font-family:var(--cond)}
+.dz-f span:hover{border-color:var(--orange);color:var(--black)}
 
 /* ── Empty state ────────────────────────────────────────────────────── */
-.es{text-align:center;padding:42px 24px;border:1px dashed var(--bd2);border-radius:16px;background:rgba(22,27,34,.5)}
-.es-t{font-size:16px;font-weight:700;color:var(--tx2);margin-top:13px}
+.es{text-align:center;padding:42px 24px;border:1px dashed var(--bd2);border-radius:var(--r);background:var(--mist)}
+.es-t{font-family:var(--serif);font-size:17px;font-weight:700;color:var(--tx);margin-top:13px}
 .es-d{font-size:13.5px;color:var(--tx3);margin-top:6px;max-width:430px;margin-left:auto;margin-right:auto;line-height:1.6}
 
 /* ── Footer ─────────────────────────────────────────────────────────── */
 .ei-foot{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;
-  margin-top:32px;padding:15px 20px;border-top:1px solid var(--bd);border-radius:12px;
-  background:rgba(16,24,39,.5);font-size:11.5px;color:var(--tx3)}
-.ei-foot b{color:var(--tx2);font-weight:600}
+  margin-top:32px;padding:15px 20px;border-top:3px solid var(--orange);border-radius:0;
+  background:var(--mist);font-size:11.5px;color:var(--tx3)}
+.ei-foot b{color:var(--tx);font-weight:700}
 .ei-foot-r{display:flex;gap:16px;flex-wrap:wrap;align-items:center}
 
 /* ── Sidebar ────────────────────────────────────────────────────────── */
 section[data-testid="stSidebar"]{
-  background:linear-gradient(180deg,#101827 0%,#0B111C 100%);
+  background:var(--mist);
   border-right:1px solid var(--bd);
 }
 section[data-testid="stSidebar"] > div{padding-top:1.1rem}
 section[data-testid="stSidebar"] *{color:var(--tx2)}
-section[data-testid="stSidebar"] h1,section[data-testid="stSidebar"] h2,section[data-testid="stSidebar"] h3{color:#fff!important}
+section[data-testid="stSidebar"] h1,section[data-testid="stSidebar"] h2,section[data-testid="stSidebar"] h3{
+  color:var(--tx)!important;font-family:var(--serif)!important}
 section[data-testid="stSidebar"] hr{border-top:1px solid var(--bd)!important;margin:.9rem 0!important}
 section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] p{color:var(--tx3)!important}
 
-/* nav label = enterprise nav item */
+/* nav item */
 section[data-testid="stSidebar"] div[role="radiogroup"]{gap:5px!important;display:flex;flex-direction:column}
 section[data-testid="stSidebar"] div[role="radiogroup"] > label{
-  display:flex!important;align-items:center;gap:11px;padding:10px 12px;border-radius:11px;
+  display:flex!important;align-items:center;gap:11px;padding:10px 12px;border-radius:var(--r);
   border:1px solid transparent;cursor:pointer;transition:all .22s cubic-bezier(.22,1,.36,1);
   margin:0!important;position:relative;
 }
-section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover{background:var(--hov);border-color:var(--bd)}
-section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:last-child{
-  font-size:13.5px!important;font-weight:600!important;color:var(--tx2)!important;letter-spacing:-.01em}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover{background:var(--white);border-color:var(--bd)}
+/* Hide the native radio glyph — the orange Lens-tag icon stands in for it.
+   Two selectors so this holds across Streamlit's older and newer radio DOMs. */
+section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child,
+section[data-testid="stSidebar"] div[role="radiogroup"] > label > div > div > div:first-child{
+  display:none!important}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:last-child,
+section[data-testid="stSidebar"] div[role="radiogroup"] > label [data-testid="stMarkdownContainer"] p{
+  font-size:13.5px!important;font-weight:500!important;color:var(--tx2)!important;letter-spacing:-.01em;
+  margin:0!important}
 section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked){
-  background:linear-gradient(100deg,rgba(0,120,212,.20),rgba(24,182,246,.06));
-  border-color:rgba(0,120,212,.44);box-shadow:0 0 22px rgba(0,120,212,.16),inset 0 0 0 1px rgba(255,255,255,.03);
+  background:var(--white);border-color:var(--bd2);
 }
 section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked)::before{
-  content:'';position:absolute;left:0;top:19%;height:62%;width:3px;border-radius:0 3px 3px 0;
-  background:linear-gradient(180deg,var(--cyan),var(--blue));box-shadow:0 0 12px rgba(24,182,246,.85);
+  content:'';position:absolute;left:0;top:15%;height:70%;width:4px;border-radius:0;
+  background:var(--orange);
 }
-section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) > div:last-child{color:#fff!important;font-weight:700!important}
-section[data-testid="stSidebar"] div[role="radiogroup"] input{accent-color:var(--blue)}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) > div:last-child,
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) [data-testid="stMarkdownContainer"] p{
+  color:var(--tx)!important;font-weight:700!important}
+section[data-testid="stSidebar"] div[role="radiogroup"] input{accent-color:var(--orange)}
 
 section[data-testid="stSidebar"] button{
-  background:rgba(255,255,255,.05)!important;border:1px solid var(--bd2)!important;
-  color:var(--tx2)!important;font-weight:600!important;border-radius:10px!important;font-size:13px!important;
+  background:var(--white)!important;border:1px solid var(--bd2)!important;
+  color:var(--tx)!important;font-weight:500!important;border-radius:var(--r)!important;font-size:13px!important;
   transition:all .22s ease!important}
 section[data-testid="stSidebar"] button:hover{
-  background:rgba(0,120,212,.24)!important;border-color:rgba(0,120,212,.6)!important;
-  color:#fff!important;transform:translateY(-1px)}
+  background:var(--orange)!important;border-color:var(--orange)!important;
+  color:var(--black)!important;transform:translateY(-1px)}
 
 /* ── Inputs ─────────────────────────────────────────────────────────── */
 .stSelectbox div[data-baseweb="select"] > div,
 .stMultiSelect div[data-baseweb="select"] > div{
-  background:rgba(22,27,34,.9)!important;border:1px solid var(--bd)!important;border-radius:10px!important;
+  background:var(--white)!important;border:1px solid var(--bd2)!important;border-radius:var(--r)!important;
   color:var(--tx)!important;transition:all .2s ease!important;min-height:40px}
-.stSelectbox div[data-baseweb="select"] > div:hover{border-color:rgba(24,182,246,.44)!important;background:rgba(30,37,48,.95)!important}
+.stSelectbox div[data-baseweb="select"] > div:hover{border-color:var(--orange)!important;background:var(--white)!important}
 div[data-baseweb="select"] svg{color:var(--tx3)!important}
-div[data-baseweb="popover"] li{background:var(--card)!important;color:var(--tx2)!important;font-size:13.5px!important}
-div[data-baseweb="popover"] li:hover{background:rgba(0,120,212,.24)!important;color:#fff!important}
-div[data-baseweb="popover"] ul{background:var(--card)!important;border:1px solid var(--bd2)!important;border-radius:10px!important}
+div[data-baseweb="popover"] li{background:var(--white)!important;color:var(--tx2)!important;font-size:13.5px!important}
+div[data-baseweb="popover"] li:hover{background:var(--mist)!important;color:var(--black)!important}
+div[data-baseweb="popover"] ul{background:var(--white)!important;border:1px solid var(--bd2)!important;border-radius:var(--r)!important}
 
 .stTextInput input,.stNumberInput input,.stTextArea textarea{
-  background:rgba(22,27,34,.9)!important;border:1px solid var(--bd)!important;border-radius:10px!important;
+  background:var(--white)!important;border:1px solid var(--bd2)!important;border-radius:var(--r)!important;
   color:var(--tx)!important;font-size:14px!important;transition:all .2s ease!important}
 .stTextInput input:focus,.stNumberInput input:focus,.stTextArea textarea:focus{
-  border-color:var(--blue)!important;box-shadow:0 0 0 3px rgba(0,120,212,.18)!important}
-.stTextInput input::placeholder,.stTextArea textarea::placeholder{color:#5C6672!important}
-.stNumberInput button{background:rgba(255,255,255,.05)!important;border-color:var(--bd)!important;color:var(--tx2)!important}
+  border-color:var(--orange)!important;box-shadow:0 0 0 3px rgba(237,102,49,.22)!important}
+.stTextInput input::placeholder,.stTextArea textarea::placeholder{color:#8C857D!important}
+.stNumberInput button{background:var(--mist)!important;border-color:var(--bd2)!important;color:var(--tx2)!important}
 [data-testid="stWidgetLabel"] p,[data-testid="stWidgetLabel"] label{
-  font-size:12px!important;font-weight:600!important;color:var(--tx2)!important;
-  letter-spacing:.04em!important;text-transform:uppercase!important}
+  font-size:11.5px!important;font-weight:700!important;color:var(--tx2)!important;
+  letter-spacing:.06em!important;text-transform:uppercase!important;font-family:var(--cond)!important}
 
 /* ── Buttons ────────────────────────────────────────────────────────── */
 .stButton button,.stDownloadButton button,.stFormSubmitButton button{
-  border-radius:10px!important;font-weight:600!important;font-size:13.5px!important;
-  transition:all .24s cubic-bezier(.22,1,.36,1)!important;border:1px solid var(--bd2)!important;
-  background:rgba(255,255,255,.05)!important;color:var(--tx)!important;padding:.5rem 1.1rem!important}
+  border-radius:var(--r)!important;font-weight:500!important;font-size:13.5px!important;
+  transition:all .24s cubic-bezier(.22,1,.36,1)!important;border:1px solid var(--black)!important;
+  background:var(--white)!important;color:var(--tx)!important;padding:.5rem 1.1rem!important}
 .stButton button:hover,.stDownloadButton button:hover,.stFormSubmitButton button:hover{
-  background:var(--hov)!important;border-color:rgba(255,255,255,.26)!important;transform:translateY(-1px)}
+  background:var(--mist)!important;border-color:var(--black)!important;transform:translateY(-1px)}
+/* Orange is the house colour — primary actions carry it, with black type (WCAG) */
 .stButton button[kind="primary"],.stFormSubmitButton button[kind="primary"],
 .stButton button[data-testid="baseButton-primary"]{
-  background:linear-gradient(135deg,var(--blue),#0A94F0)!important;border-color:transparent!important;
-  color:#fff!important;font-weight:700!important;box-shadow:0 4px 16px rgba(0,120,212,.42)!important}
+  background:var(--orange)!important;border-color:var(--orange)!important;
+  color:var(--black)!important;font-weight:700!important;box-shadow:0 2px 8px rgba(237,102,49,.30)!important}
 .stButton button[kind="primary"]:hover,.stFormSubmitButton button[kind="primary"]:hover,
 .stButton button[data-testid="baseButton-primary"]:hover{
-  box-shadow:0 8px 26px rgba(0,120,212,.58)!important;transform:translateY(-2px)!important;
-  background:linear-gradient(135deg,#0A88E8,var(--cyan))!important}
-.stDownloadButton button{background:rgba(24,182,246,.13)!important;border-color:rgba(24,182,246,.36)!important;color:#8FD4FA!important}
-.stDownloadButton button:hover{background:rgba(24,182,246,.24)!important;color:#fff!important}
+  box-shadow:0 6px 18px rgba(237,102,49,.42)!important;transform:translateY(-2px)!important;
+  background:var(--black)!important;border-color:var(--black)!important;color:var(--white)!important}
+.stDownloadButton button{background:var(--white)!important;border-color:var(--orange)!important;color:var(--black)!important}
+.stDownloadButton button:hover{background:var(--orange)!important;color:var(--black)!important}
 
 /* ── Tabs ───────────────────────────────────────────────────────────── */
 .stTabs [data-baseweb="tab-list"]{gap:5px;background:transparent;border-bottom:1px solid var(--bd);padding-bottom:0}
 .stTabs [data-baseweb="tab"]{
-  background:transparent!important;border-radius:10px 10px 0 0!important;padding:9px 17px!important;
-  font-weight:600!important;font-size:13.5px!important;color:var(--tx3)!important;transition:all .22s ease!important}
-.stTabs [data-baseweb="tab"]:hover{background:var(--hov)!important;color:var(--tx2)!important}
-.stTabs [aria-selected="true"]{color:#fff!important;background:rgba(0,120,212,.14)!important}
-.stTabs [data-baseweb="tab-highlight"]{background:linear-gradient(90deg,var(--blue),var(--cyan))!important;height:2px!important}
+  background:transparent!important;border-radius:0!important;padding:9px 17px!important;
+  font-weight:500!important;font-size:13.5px!important;color:var(--tx3)!important;transition:all .22s ease!important}
+.stTabs [data-baseweb="tab"]:hover{background:var(--mist)!important;color:var(--tx)!important}
+.stTabs [aria-selected="true"]{color:var(--tx)!important;background:transparent!important;font-weight:700!important}
+.stTabs [data-baseweb="tab-highlight"]{background:var(--orange)!important;height:3px!important}
 .stTabs [data-baseweb="tab-border"]{background:transparent!important}
 
 /* ── Data grid ──────────────────────────────────────────────────────── */
 [data-testid="stDataFrame"],[data-testid="stDataEditor"]{
-  border:1px solid var(--bd)!important;border-radius:12px!important;overflow:hidden!important;
-  box-shadow:0 4px 20px rgba(0,0,0,.28)!important;background:rgba(22,27,34,.6)!important}
+  border:1px solid var(--bd)!important;border-radius:var(--r)!important;overflow:hidden!important;
+  box-shadow:0 1px 3px rgba(0,0,0,.05)!important;background:var(--white)!important}
 [data-testid="stDataFrame"] div[role="columnheader"],[data-testid="stDataEditor"] div[role="columnheader"]{
-  background:#131A24!important;color:var(--tx2)!important;font-weight:700!important;
+  background:var(--mist)!important;color:var(--tx)!important;font-weight:700!important;
   text-transform:uppercase;letter-spacing:.06em;font-size:11px!important}
 
 /* ── Alerts ─────────────────────────────────────────────────────────── */
-div[data-testid="stAlert"]{border-radius:12px!important;border:1px solid var(--bd)!important;
-  background:rgba(30,37,48,.85)!important;backdrop-filter:blur(10px)}
+div[data-testid="stAlert"]{border-radius:var(--r)!important;border:1px solid var(--bd)!important;
+  border-left:4px solid var(--orange)!important;background:var(--mist)!important}
 div[data-testid="stAlert"] p{color:var(--tx2)!important;font-size:13.5px!important}
 
 /* ── Expander / file uploader / metric / progress ───────────────────── */
-[data-testid="stExpander"]{border:1px solid var(--bd)!important;border-radius:12px!important;
-  background:rgba(22,27,34,.72)!important;overflow:hidden}
-[data-testid="stExpander"] summary{font-size:13.5px!important;font-weight:600!important;color:var(--tx2)!important}
-[data-testid="stExpander"] summary:hover{background:var(--hov)!important}
+[data-testid="stExpander"]{border:1px solid var(--bd)!important;border-radius:var(--r)!important;
+  background:var(--white)!important;overflow:hidden}
+[data-testid="stExpander"] summary{font-size:13.5px!important;font-weight:600!important;color:var(--tx)!important}
+[data-testid="stExpander"] summary:hover{background:var(--mist)!important}
 [data-testid="stFileUploader"] section{
-  background:rgba(22,27,34,.65)!important;border:1.5px dashed rgba(24,182,246,.30)!important;
-  border-radius:14px!important;transition:all .28s cubic-bezier(.22,1,.36,1)!important;padding:18px!important}
+  background:var(--mist)!important;border:1.5px dashed var(--fossil)!important;
+  border-radius:var(--r)!important;transition:all .28s cubic-bezier(.22,1,.36,1)!important;padding:18px!important}
 [data-testid="stFileUploader"] section:hover{
-  border-color:rgba(24,182,246,.62)!important;background:rgba(0,120,212,.10)!important;
-  box-shadow:0 0 0 4px rgba(0,120,212,.10),0 14px 40px rgba(0,0,0,.42)!important;transform:translateY(-2px)}
+  border-color:var(--orange)!important;background:var(--pebble)!important;
+  box-shadow:0 10px 30px rgba(0,0,0,.08)!important;transform:translateY(-2px)}
 [data-testid="stFileUploader"] section small,[data-testid="stFileUploader"] section span{color:var(--tx3)!important}
-[data-testid="stFileUploader"] button{background:rgba(0,120,212,.18)!important;border-color:rgba(0,120,212,.42)!important;color:#8FD4FA!important}
-[data-testid="stMetric"]{background:linear-gradient(160deg,rgba(30,37,48,.92),rgba(22,27,34,.92));
+[data-testid="stFileUploader"] button{background:var(--orange)!important;border-color:var(--orange)!important;color:var(--black)!important}
+[data-testid="stMetric"]{background:var(--mist);
   border:1px solid var(--bd);border-radius:var(--r);padding:15px 17px;transition:all .26s ease}
-[data-testid="stMetric"]:hover{transform:translateY(-2px);border-color:rgba(24,182,246,.34)}
+[data-testid="stMetric"]:hover{transform:translateY(-2px);border-color:var(--fossil)}
 [data-testid="stMetricLabel"] p{font-size:11px!important;font-weight:700!important;color:var(--tx3)!important;
   text-transform:uppercase!important;letter-spacing:.1em!important}
-[data-testid="stMetricValue"]{font-size:27px!important;font-weight:800!important;color:#fff!important;letter-spacing:-.03em}
-.stProgress > div > div > div{background:linear-gradient(90deg,var(--blue),var(--cyan))!important}
-.stSpinner > div{border-top-color:var(--cyan)!important}
-[data-testid="stForm"]{border:1px solid var(--bd)!important;border-radius:14px!important;
-  background:rgba(22,27,34,.6)!important;padding:20px!important}
+[data-testid="stMetricValue"]{font-family:var(--serif)!important;font-size:28px!important;font-weight:700!important;
+  color:var(--tx)!important;letter-spacing:-.02em}
+.stProgress > div > div > div{background:var(--orange)!important}
+.stSpinner > div{border-top-color:var(--orange)!important}
+[data-testid="stForm"]{border:1px solid var(--bd)!important;border-radius:var(--r)!important;
+  background:var(--white)!important;padding:20px!important}
 .js-plotly-plot .plotly .modebar{background:transparent!important}
-.js-plotly-plot{border-radius:12px;overflow:hidden}
+.js-plotly-plot{border-radius:var(--r);overflow:hidden}
+
+/* ── Streamlit DOM compatibility ────────────────────────────────────────
+   Newer Streamlit builds render selects as a react-aria ComboBox and wrap
+   alerts in their own tinted container. These rules re-apply the brand
+   surface for those builds without disturbing the older selectors above. */
+[data-testid="stSelectbox"] div[role="group"],
+[data-testid="stMultiSelect"] div[role="group"],
+[data-testid="stDateInput"] div[role="group"]{
+  background:var(--white)!important;border:1px solid var(--bd2)!important;
+  border-radius:var(--r)!important;color:var(--tx)!important}
+[data-testid="stSelectbox"] div[role="group"]:focus-within,
+[data-testid="stMultiSelect"] div[role="group"]:focus-within{
+  border-color:var(--orange)!important;box-shadow:0 0 0 3px rgba(237,102,49,.22)!important}
+[data-testid="stSelectbox"] input,[data-testid="stMultiSelect"] input{
+  background:transparent!important;color:var(--tx)!important}
+.react-aria-Popover,[role="listbox"]{
+  background:var(--white)!important;border:1px solid var(--bd2)!important;border-radius:var(--r)!important}
+[role="option"]{background:var(--white)!important;color:var(--tx2)!important}
+[role="option"]:hover,[role="option"][data-focused]{background:var(--mist)!important;color:var(--black)!important}
+
+/* Alerts: warm-grey field with a coloured rule, instead of Streamlit's tints */
+[data-testid="stAlertContainer"]{background:var(--mist)!important;color:var(--tx2)!important;
+  border-radius:var(--r)!important;box-shadow:inset 4px 0 0 var(--orange)}
+[data-testid="stAlertContentInfo"]    ~ *,[data-testid="stAlertContentInfo"]{color:var(--tx2)!important}
+div[data-testid="stAlert"]:has([data-testid="stAlertContentInfo"])    [data-testid="stAlertContainer"]{box-shadow:inset 4px 0 0 var(--marine)}
+div[data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) [data-testid="stAlertContainer"]{box-shadow:inset 4px 0 0 var(--fern)}
+div[data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]) [data-testid="stAlertContainer"]{box-shadow:inset 4px 0 0 var(--kurkuma)}
+div[data-testid="stAlert"]:has([data-testid="stAlertContentError"])   [data-testid="stAlertContainer"]{box-shadow:inset 4px 0 0 var(--err)}
+
 #MainMenu,footer,header[data-testid="stHeader"]{visibility:hidden;height:0}
 </style>
 """, unsafe_allow_html=True)
@@ -379,22 +441,60 @@ div[data-testid="stAlert"] p{color:var(--tx2)!important;font-size:13.5px!importa
 #  DESIGN SYSTEM — tokens, Lucide icons and reusable UI components
 #  (Presentation layer only — no analytical behaviour lives here.)
 # ══════════════════════════════════════════════════════════════════════════════
-UI = {
-    "bg": "#0E1117", "bg2": "#161B22", "card": "#1E2530", "side": "#101827",
-    "blue": "#0078D4", "cyan": "#18B6F6", "ok": "#32D583", "warn": "#F79009",
-    "err": "#F04438", "tx": "#FFFFFF", "tx2": "#B8C2CC", "tx3": "#7D8894",
-    "grid": "rgba(255,255,255,0.07)",
+# Stantec brand palette — see "Visuele identiteit & ontwerprichtlijnen", kleurenpalet.
+# Hoofdkleuren: Wit, Mist, Kiezelsteen, Fossiel, Zwart, Stantec-oranje.
+# Secundaire kleuren: Fern, Marine, Kurkuma, Himalayazout.
+BRAND = {
+    "orange": "#ED6631",   # Stantec-oranje — house colour
+    "white":  "#FFFFFF",   # Wit
+    "mist":   "#F2EFEC",   # Mist (extra-lichtgrijs)
+    "pebble": "#E2DDDB",   # Kiezelsteen (lichtgrijs)
+    "fossil": "#C9C4BD",   # Fossiel (grijs)
+    "black":  "#000000",   # Zwart
+    "fern":   "#1A845C",   # Fern (groen)
+    "marine": "#2A73D9",   # Marine (blauw)
+    "kurkuma": "#F3BE0A",  # Kurkuma (geel)
+    "salt":   "#F4B5B5",   # Himalayazout (roze)
 }
+
+UI = {
+    # Surfaces
+    "bg": BRAND["white"], "bg2": BRAND["mist"],
+    "card": BRAND["white"], "side": BRAND["mist"],
+    # Accents — "blue"/"cyan" are kept as key names for backwards compatibility,
+    # but both now resolve to the brand's house colour and its supporting blue.
+    "blue": BRAND["orange"], "cyan": BRAND["orange"], "accent2": BRAND["marine"],
+    # Status. Fern / Kurkuma / Marine come from the palette; the brand carries no
+    # red, so a functional alert red is used for hard failures only.
+    "ok": BRAND["fern"], "warn": BRAND["kurkuma"], "err": "#B3261E",
+    "info": BRAND["marine"],
+    # Type — black on light, per the WCAG contrast table in the guidelines.
+    "tx": BRAND["black"], "tx2": "#26221F", "tx3": "#5F5850",
+    "grid": "#E2DDDB",
+    "bd": "#DED8D3",
+}
+UI.update(BRAND)
+
 APP_VERSION = "v2.0"
+
+# Typeface stacks — Source Serif 4 for headings, Roboto for body copy.
+FONT_SERIF = "Source Serif 4, Georgia, serif"
+FONT_SANS  = "Roboto, Arial, sans-serif"
+
+# Path to the official Stantec logo. Drop the asset from the brand portal here;
+# the header falls back to a Lens-tag style orange block if it is absent.
+LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "stantec_logo.svg")
 
 # Navigation destinations (each maps to a real, implemented page).
 PAGE_QA       = "QA/QC Validation"
 PAGE_EXPLORER = "Benchmark Explorer"
 PAGE_DB       = "Benchmark Database"
 
-# Chart palette — consistent across every figure in the app.
-CHART_SEQ = ["#18B6F6", "#0078D4", "#7C5CFF", "#32D583", "#F79009",
-             "#F04438", "#00C2A8", "#E879F9", "#8FA3B8"]
+# Chart palette — brand colours first, then tints. The guidelines allow tints of
+# the primary colours in data visualisation only.
+CHART_SEQ = [BRAND["orange"], BRAND["marine"], BRAND["fern"], BRAND["kurkuma"],
+             BRAND["salt"], BRAND["black"], BRAND["fossil"],
+             "#F59A72", "#7FA9E8"]
 
 # Lucide-style outline icons (24x24, currentColor, stroke 2).
 _L = {
@@ -446,7 +546,7 @@ def icon(name, size=16, color="currentColor", sw=2):
             f'fill="none" stroke="{color}" stroke-width="{sw}" stroke-linecap="round" '
             f'stroke-linejoin="round"><path d="{d}"/></svg>')
 
-def _svg_uri(name, stroke="%23B8C2CC"):
+def _svg_uri(name, stroke="%235F5850"):
     """URL-encoded single-path SVG for use inside a CSS data: URI (sidebar nav icons)."""
     d = _L.get(name, _L["activity"])
     svg = ("<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' "
@@ -461,23 +561,46 @@ def _svg_uri(name, stroke="%23B8C2CC"):
         svg = svg.replace(a, b)
     return svg
 
+@st.cache_data(show_spinner=False)
+def _load_logo_asset(path):
+    """Read the official Stantec logo from disk once. Returns (kind, payload)."""
+    if not os.path.exists(path):
+        return None, None
+    ext = os.path.splitext(path)[1].lower()
+    try:
+        if ext == ".svg":
+            with open(path, "r", encoding="utf-8") as f:
+                return "svg", f.read()
+        with open(path, "rb") as f:
+            import base64
+            mime = "image/png" if ext == ".png" else "image/jpeg"
+            return "img", f"data:{mime};base64,{base64.b64encode(f.read()).decode()}"
+    except Exception:
+        return None, None
+
+
 def logo_mark(size=40):
-    """Hexagon brand mark with blue/cyan gradient core and an energy bolt."""
-    return f'''<svg class="ei-mark" width="{size}" height="{size}" viewBox="0 0 48 48" fill="none"
-        xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <linearGradient id="eiG" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
-          <stop stop-color="#18B6F6"/><stop offset=".55" stop-color="#0078D4"/><stop offset="1" stop-color="#F79009"/>
-        </linearGradient>
-        <linearGradient id="eiG2" x1="24" y1="6" x2="24" y2="42" gradientUnits="userSpaceOnUse">
-          <stop stop-color="#FFFFFF" stop-opacity=".95"/><stop offset="1" stop-color="#FFFFFF" stop-opacity=".55"/>
-        </linearGradient>
-      </defs>
-      <path d="M24 2.6 43.2 13.3v21.4L24 45.4 4.8 34.7V13.3L24 2.6z" fill="url(#eiG)" fill-opacity=".18"/>
-      <path d="M24 2.6 43.2 13.3v21.4L24 45.4 4.8 34.7V13.3L24 2.6z" stroke="url(#eiG)" stroke-width="2.1"/>
-      <path d="M24 9.6 37 16.9v14.2L24 38.4 11 31.1V16.9L24 9.6z" stroke="url(#eiG)" stroke-width="1" stroke-opacity=".45"/>
-      <path d="M25.6 14.5 17.2 25.4h5.6l-1.4 8.6 8.4-11.4h-5.6l1.4-8.1z" fill="url(#eiG2)"/>
-    </svg>'''
+    """Stantec logo lockup.
+
+    The official mark is never redrawn here — it is loaded from
+    ``assets/stantec_logo.svg`` (or .png) so the approved artwork is always the
+    one that ships. Until that asset is dropped in, a Lens-tag style orange
+    block stands in: an orange square with the tool's initials, matching the
+    'Lens-tag' guidance for constrained spaces.
+    """
+    kind, payload = _load_logo_asset(LOGO_PATH)
+    if kind == "svg":
+        return (f'<span class="ei-mark" style="display:inline-flex;align-items:center;'
+                f'height:{size}px;width:auto">{payload}</span>')
+    if kind == "img":
+        return (f'<img class="ei-mark" src="{payload}" alt="Stantec" '
+                f'style="height:{size}px;width:auto;object-fit:contain"/>')
+    # Fallback placeholder — a solid Stantec-orange tag, black type (WCAG-safe).
+    return (f'<span class="ei-mark" title="Place the official logo at assets/stantec_logo.svg" '
+            f'style="width:{size}px;height:{size}px;border-radius:2px;background:{BRAND["orange"]};'
+            f'display:inline-flex;align-items:center;justify-content:center;'
+            f'font-family:{FONT_SERIF};font-weight:700;font-size:{max(11, int(size*0.42))}px;'
+            f'color:{BRAND["black"]};letter-spacing:-.02em;flex-shrink:0">EI</span>')
 
 def render_header(bm_count, page_label):
     """Top application header: brand, environment badges, utility icons, avatar."""
@@ -518,7 +641,7 @@ def section(title, desc="", ic="bar"):
       <span style="color:{UI['cyan']};display:flex;align-items:center">{icon(ic,17)}</span>
       <span class="ei-sec-t">{title}</span>{d}</div>''', unsafe_allow_html=True)
 
-def sparkline(values, color="#18B6F6", w=104, h=26):
+def sparkline(values, color="#ED6631", w=104, h=26):
     """Minimal inline SVG sparkline with a soft gradient area fill."""
     vals = [float(v) for v in values if v is not None]
     if len(vals) < 2:
@@ -539,13 +662,16 @@ def sparkline(values, color="#18B6F6", w=104, h=26):
             f'stroke-linecap="round" stroke-linejoin="round"/>'
             f'<circle cx="{pts[-1][0]:.1f}" cy="{pts[-1][1]:.1f}" r="2.4" fill="{color}"/></svg>')
 
+# KPI accent tones: (rule / icon colour, icon field, border).
+# Icon fields stay white so no colour is used as a tint of itself.
 _TONE = {
-    "ok":   ("#32D583", "rgba(50,213,131,.13)",  "rgba(50,213,131,.26)"),
-    "warn": ("#F79009", "rgba(247,144,9,.13)",   "rgba(247,144,9,.26)"),
-    "err":  ("#F04438", "rgba(240,68,56,.13)",   "rgba(240,68,56,.26)"),
-    "blue": ("#0078D4", "rgba(0,120,212,.14)",   "rgba(0,120,212,.28)"),
-    "cyan": ("#18B6F6", "rgba(24,182,246,.13)",  "rgba(24,182,246,.26)"),
-    "idle": ("#7D8894", "rgba(255,255,255,.05)", "rgba(255,255,255,.10)"),
+    "ok":   (BRAND["fern"],   BRAND["white"], "#DED8D3"),
+    "warn": (BRAND["kurkuma"], BRAND["white"], "#DED8D3"),
+    "err":  ("#B3261E",       BRAND["white"], "#DED8D3"),
+    "blue": (BRAND["orange"], BRAND["white"], "#DED8D3"),   # legacy key → house colour
+    "cyan": (BRAND["orange"], BRAND["white"], "#DED8D3"),   # legacy key → house colour
+    "marine": (BRAND["marine"], BRAND["white"], "#DED8D3"),
+    "idle": (BRAND["fossil"], BRAND["white"], "#DED8D3"),
 }
 
 def kpi_html(label, value, unit="", ic="bar", tone="cyan",
@@ -614,20 +740,21 @@ def footer(bm_count, synced=True):
 
 # ── Plotly theming ────────────────────────────────────────────────────────────
 def style_fig(fig, height=330, title=None, legend=True, ytitle=None, xtitle=None):
-    """Apply the dark enterprise chart theme to any Plotly figure."""
+    """Apply the Stantec light chart theme to any Plotly figure."""
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_white",
+        colorway=CHART_SEQ,
         height=height,
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Inter, sans-serif", color=UI["tx2"], size=12),
-        title=(dict(text=title, font=dict(size=14, color=UI["tx"], family="Inter, sans-serif"),
-                    x=0, xanchor="left", y=.97) if title else None),
+        font=dict(family=FONT_SANS, color=UI["tx2"], size=12),
+        **({"title": dict(text=title, font=dict(size=15, color=UI["tx"], family=FONT_SERIF),
+                          x=0, xanchor="left", y=.97)} if title else {}),
         margin=dict(t=48 if title else 18, b=12, l=10, r=12),
         showlegend=legend,
         legend=dict(orientation="h", y=-0.20, x=0, font=dict(size=11, color=UI["tx3"]),
                     bgcolor="rgba(0,0,0,0)"),
-        hoverlabel=dict(bgcolor="#1E2530", bordercolor="rgba(255,255,255,.18)",
-                        font=dict(color="#FFFFFF", size=12, family="Inter, sans-serif")),
+        hoverlabel=dict(bgcolor=BRAND["white"], bordercolor=BRAND["fossil"],
+                        font=dict(color=BRAND["black"], size=12, family=FONT_SANS)),
         yaxis_title=ytitle, xaxis_title=xtitle,
     )
     fig.update_xaxes(gridcolor=UI["grid"], zerolinecolor=UI["grid"], linecolor=UI["grid"],
@@ -643,27 +770,30 @@ def make_gauge(value, title, vmax=100, good_high=True):
     v = max(0.0, min(float(value), float(vmax)))
     ratio = v / vmax if vmax else 0
     lvl = ratio if good_high else 1 - ratio
-    col = UI["ok"] if lvl >= 0.75 else UI["cyan"] if lvl >= 0.5 else UI["warn"] if lvl >= 0.25 else UI["err"]
+    col = (UI["ok"] if lvl >= 0.75 else BRAND["orange"] if lvl >= 0.5
+           else UI["warn"] if lvl >= 0.25 else UI["err"])
     fig = go.Figure(go.Indicator(
         mode="gauge+number", value=round(v),
-        number=dict(font=dict(size=38, color="#FFFFFF", family="Inter, sans-serif"), suffix=""),
+        number=dict(font=dict(size=38, color=BRAND["black"], family=FONT_SERIF), suffix=""),
         gauge=dict(
-            axis=dict(range=[0, vmax], tickwidth=1, tickcolor=UI["grid"],
+            axis=dict(range=[0, vmax], tickwidth=1, tickcolor=BRAND["fossil"],
                       tickfont=dict(color=UI["tx3"], size=10)),
             bar=dict(color=col, thickness=0.30),
-            bgcolor="rgba(255,255,255,0.03)", borderwidth=0,
-            steps=[dict(range=[0, vmax * .25], color="rgba(240,68,56,.10)"),
-                   dict(range=[vmax * .25, vmax * .5], color="rgba(247,144,9,.10)"),
-                   dict(range=[vmax * .5, vmax * .75], color="rgba(24,182,246,.10)"),
-                   dict(range=[vmax * .75, vmax], color="rgba(50,213,131,.10)")],
-            threshold=dict(line=dict(color="rgba(255,255,255,.55)", width=2),
+            bgcolor=BRAND["white"], borderwidth=1, bordercolor=UI["bd"],
+            # Warm-grey bands: the scale reads through the bar colour, not tinted fields.
+            steps=[dict(range=[0, vmax * .25], color=BRAND["pebble"]),
+                   dict(range=[vmax * .25, vmax * .5], color="#EAE6E3"),
+                   dict(range=[vmax * .5, vmax * .75], color=BRAND["mist"]),
+                   dict(range=[vmax * .75, vmax], color=BRAND["white"])],
+            threshold=dict(line=dict(color=BRAND["black"], width=2),
                            thickness=0.8, value=v)),
     ))
     fig.update_layout(
         height=190, margin=dict(t=42, b=6, l=22, r=22),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Inter, sans-serif", color=UI["tx2"]),
-        title=dict(text=title, font=dict(size=12.5, color=UI["tx3"]), x=.5, xanchor="center", y=.97),
+        font=dict(family=FONT_SANS, color=UI["tx2"]),
+        title=dict(text=title, font=dict(size=12.5, color=UI["tx3"], family=FONT_SANS),
+                   x=.5, xanchor="center", y=.97),
     )
     return fig
 
@@ -1453,20 +1583,20 @@ def flags_from_comparison(rows, kpis, bm, building_type):
     return flags
 
 def make_pie(labels, values, title):
-    """Dark donut chart with the aggregate total rendered in the centre."""
+    """Brand donut chart with the aggregate total rendered in the centre."""
     total = sum(values) if values else 0
     fig = go.Figure(go.Pie(
         labels=labels, values=values, hole=0.62, sort=False,
         marker=dict(colors=CHART_SEQ[:len(labels)],
-                    line=dict(color="rgba(14,17,23,.85)", width=2.5)),
+                    line=dict(color=BRAND["white"], width=2.5)),
         textinfo="percent", textposition="outside",
-        textfont=dict(size=11.5, color=UI["tx2"], family="Inter, sans-serif"),
+        textfont=dict(size=11.5, color=UI["tx2"], family=FONT_SANS),
         hovertemplate="<b>%{label}</b><br>%{value:.1f} kWh/m\u00b2\u00b7yr &middot; %{percent}<extra></extra>",
     ))
     fig.add_annotation(text=f"<b>{total:,.0f}</b>", showarrow=False,
-                       font=dict(size=27, color="#FFFFFF", family="Inter, sans-serif"), y=.545)
+                       font=dict(size=27, color=BRAND["black"], family=FONT_SERIF), y=.545)
     fig.add_annotation(text="kWh/m\u00b2\u00b7yr", showarrow=False,
-                       font=dict(size=10.5, color=UI["tx3"], family="Inter, sans-serif"), y=.40)
+                       font=dict(size=10.5, color=UI["tx3"], family=FONT_SANS), y=.40)
     return style_fig(fig, height=340, title=title, legend=True)
 
 def build_pdf_report(meta, kpis, bm, flags, pct, comparison_df):
@@ -1505,10 +1635,12 @@ def build_pdf_report(meta, kpis, bm, flags, pct, comparison_df):
         title=f"QA/QC Report - {meta['project_name'] or 'Project'}",
     )
     styles = getSampleStyleSheet()
-    h1    = ParagraphStyle("h1", parent=styles["Heading1"], textColor=colors.HexColor("#0E1117"), fontSize=17, spaceAfter=2)
-    h2    = ParagraphStyle("h2", parent=styles["Heading2"], textColor=colors.HexColor("#0E1117"), fontSize=12, spaceBefore=8, spaceAfter=4)
+    # Report styling follows the Stantec palette: black type, orange table headers,
+    # warm-grey banding (Mist) instead of the cool blue-grey of the previous theme.
+    h1    = ParagraphStyle("h1", parent=styles["Heading1"], textColor=colors.HexColor("#000000"), fontSize=17, spaceAfter=2)
+    h2    = ParagraphStyle("h2", parent=styles["Heading2"], textColor=colors.HexColor("#000000"), fontSize=12, spaceBefore=8, spaceAfter=4)
     body  = styles["BodyText"]
-    small = ParagraphStyle("small", parent=body, fontSize=9, textColor=colors.HexColor("#64748b"))
+    small = ParagraphStyle("small", parent=body, fontSize=9, textColor=colors.HexColor("#5F5850"))
     cell  = ParagraphStyle("cell", parent=body, fontSize=8, leading=10)
 
     elems = []
@@ -1556,11 +1688,11 @@ def build_pdf_report(meta, kpis, bm, flags, pct, comparison_df):
     ]
     t = Table(summ, hAlign="LEFT", colWidths=[7*cm, 4*cm, 5*cm])
     t.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0078D4")),
-        ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#ED6631")),
+        ("TEXTCOLOR",  (0, 0), (-1, 0), colors.black),
         ("FONTSIZE",   (0, 0), (-1, -1), 9),
-        ("GRID",       (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+        ("GRID",       (0, 0), (-1, -1), 0.5, colors.HexColor("#DED8D3")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F2EFEC")]),
         ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
@@ -1585,11 +1717,11 @@ def build_pdf_report(meta, kpis, bm, flags, pct, comparison_df):
         ct = Table(data, hAlign="LEFT", repeatRows=1,
                    colWidths=[4.0*cm, 2.0*cm, 2.4*cm, 1.5*cm, 1.7*cm, 1.7*cm, 4.0*cm])
         ct.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0078D4")),
-            ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#ED6631")),
+            ("TEXTCOLOR",  (0, 0), (-1, 0), colors.black),
             ("FONTSIZE",   (0, 0), (-1, -1), 8),
-            ("GRID",       (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+            ("GRID",       (0, 0), (-1, -1), 0.5, colors.HexColor("#DED8D3")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F2EFEC")]),
             ("VALIGN",     (0, 0), (-1, -1), "TOP"),
             ("TOPPADDING", (0, 0), (-1, -1), 3),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
@@ -1630,15 +1762,15 @@ _NAV_ICONS = "".join(
     f'section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type({i}) '
     f'> div:first-child{{display:none}}'
     f'section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type({i})::after{{'
-    f'content:"";width:30px;height:30px;border-radius:9px;order:-1;flex-shrink:0;'
-    f'border:1px solid rgba(255,255,255,.08);background-color:rgba(255,255,255,.04);'
+    f'content:"";width:30px;height:30px;border-radius:2px;order:-1;flex-shrink:0;'
+    f'border:1px solid #DED8D3;background-color:#FFFFFF;'
     f'background-image:url("data:image/svg+xml;utf8,{_svg_uri(ic)}");'
     f'background-repeat:no-repeat;background-position:center;background-size:15px 15px;'
     f'transition:all .22s ease}}'
+    # Selected nav item carries the Lens-tag: solid Stantec orange, black glyph.
     f'section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-of-type({i}):has(input:checked)::after{{'
-    f'background-image:url("data:image/svg+xml;utf8,{_svg_uri(ic, "%2318B6F6")}");'
-    f'border-color:rgba(24,182,246,.42);background-color:rgba(24,182,246,.14);'
-    f'box-shadow:0 0 14px rgba(24,182,246,.30)}}'
+    f'background-image:url("data:image/svg+xml;utf8,{_svg_uri(ic, "%23000000")}");'
+    f'border-color:#ED6631;background-color:#ED6631}}'
     for i, (_lbl, ic, _d) in enumerate(NAV, 1)
 )
 st.markdown(f"<style>{_NAV_ICONS}</style>", unsafe_allow_html=True)
@@ -1646,17 +1778,17 @@ st.markdown(f"<style>{_NAV_ICONS}</style>", unsafe_allow_html=True)
 with st.sidebar:
     st.markdown(f'''<div style="display:flex;align-items:center;gap:11px;padding:2px 2px 16px 2px">
       {logo_mark(36)}
-      <div><div style="font-size:16.5px;font-weight:800;color:#fff;letter-spacing:-.025em;line-height:1.15">Energy Intelligence</div>
-      <div style="font-size:9.5px;color:{UI['tx3']};letter-spacing:.14em;text-transform:uppercase;margin-top:2px;font-weight:700">Stantec Buildings</div></div>
+      <div><div style="font-family:{FONT_SERIF};font-size:17px;font-weight:700;color:{UI['tx']};letter-spacing:-.01em;line-height:1.15">Energy Intelligence</div>
+      <div style="font-size:9.5px;color:{UI['tx3']};letter-spacing:.14em;text-transform:uppercase;margin-top:3px;font-weight:700">Stantec Buildings</div></div>
     </div>''', unsafe_allow_html=True)
 
     st.markdown(f'''<div style="font-size:10px;font-weight:700;color:{UI['tx3']};letter-spacing:.14em;
         text-transform:uppercase;margin:2px 0 8px 2px">Workspace</div>
-      <div style="display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:10px;
-        border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.035);margin-bottom:14px">
-        <span style="width:24px;height:24px;border-radius:7px;background:linear-gradient(135deg,{UI['blue']},{UI['cyan']});
-          display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:10.5px">BP</span>
-        <div style="line-height:1.25"><div style="font-size:12.5px;font-weight:700;color:#fff">Buildings Practice</div>
+      <div style="display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:2px;
+        border:1px solid {UI['bd']};background:{BRAND['white']};margin-bottom:14px">
+        <span style="width:24px;height:24px;border-radius:2px;background:{BRAND['orange']};
+          display:flex;align-items:center;justify-content:center;color:{BRAND['black']};font-weight:700;font-size:10.5px">BP</span>
+        <div style="line-height:1.25"><div style="font-size:12.5px;font-weight:700;color:{UI['tx']}">Buildings Practice</div>
         <div style="font-size:10px;color:{UI['tx3']}">Western Canada</div></div>
       </div>''', unsafe_allow_html=True)
 
@@ -1673,13 +1805,14 @@ with st.sidebar:
         _h = '<div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">'
         for _i, _s in enumerate(_steps, 1):
             if _i < _cur:
-                _bg, _fg, _tc, _lb, _bd = "rgba(50,213,131,.16)", UI["ok"], UI["tx2"], icon("check", 12), "rgba(50,213,131,.34)"
+                _bg, _fg, _tc, _lb, _bd = BRAND["fern"], BRAND["white"], UI["tx2"], icon("check", 12), BRAND["fern"]
             elif _i == _cur:
-                _bg, _fg, _tc, _lb, _bd = "rgba(0,120,212,.24)", "#fff", "#fff", str(_i), "rgba(0,120,212,.55)"
+                # Current step wears the house colour, with black type (WCAG-safe).
+                _bg, _fg, _tc, _lb, _bd = BRAND["orange"], BRAND["black"], UI["tx"], str(_i), BRAND["orange"]
             else:
-                _bg, _fg, _tc, _lb, _bd = "rgba(255,255,255,.04)", UI["tx3"], UI["tx3"], str(_i), "rgba(255,255,255,.08)"
+                _bg, _fg, _tc, _lb, _bd = BRAND["white"], UI["tx3"], UI["tx3"], str(_i), UI["bd"]
             _h += (f'<div style="display:flex;align-items:center;gap:10px">'
-                   f'<span style="width:22px;height:22px;border-radius:7px;background:{_bg};color:{_fg};'
+                   f'<span style="width:22px;height:22px;border-radius:2px;background:{_bg};color:{_fg};'
                    f'border:1px solid {_bd};display:flex;align-items:center;justify-content:center;'
                    f'font-size:10.5px;font-weight:800;flex-shrink:0">{_lb}</span>'
                    f'<span style="font-size:12.5px;color:{_tc};font-weight:{"700" if _i == _cur else "500"}">{_s}</span></div>')
@@ -1695,13 +1828,13 @@ with st.sidebar:
     st.markdown(f'''<div style="display:flex;flex-direction:column;gap:7px">
       <div style="display:flex;align-items:center;justify-content:space-between">
         <span style="font-size:11px;color:{UI['tx3']};font-weight:600">Benchmarks</span>
-        <span style="font-size:12.5px;color:#fff;font-weight:800">{len(BENCHMARKS)}</span></div>
+        <span style="font-size:12.5px;color:{UI['tx']};font-weight:700">{len(BENCHMARKS)}</span></div>
       <div style="display:flex;align-items:center;justify-content:space-between">
         <span style="font-size:11px;color:{UI['tx3']};font-weight:600">Data source</span>
         <span style="font-size:11px;color:{UI['ok']};font-weight:700">&#9679; Synced</span></div>
       <div style="display:flex;align-items:center;justify-content:space-between">
         <span style="font-size:11px;color:{UI['tx3']};font-weight:600">Environment</span>
-        <span style="font-size:11px;color:{UI['cyan']};font-weight:700">Production</span></div>
+        <span style="font-size:11px;color:{BRAND['orange']};font-weight:700">Production</span></div>
     </div>''', unsafe_allow_html=True)
 
 # ── Application header ────────────────────────────────────────────────────────
@@ -1949,13 +2082,13 @@ elif st.session_state.page == PAGE_EXPLORER:
         bar_med_f    = [v for l,v in bar_pairs]
         fig_bar = go.Figure()
         fig_bar.add_trace(go.Bar(name="Median EUI", x=bar_labels_f, y=bar_med_f,
-                                 marker=dict(color=bar_med_f, colorscale=[[0, "#0A5F9E"], [1, UI["cyan"]]],
+                                 marker=dict(color=bar_med_f, colorscale=[[0, "#F7B79A"], [1, BRAND["orange"]]],
                                              line=dict(width=0)),
                                  hovertemplate="<b>%{x}</b><br>%{y:.1f} kWh/m\u00b2\u00b7yr<extra></extra>",
                                  error_y=dict(type="data", symmetric=True,
                                               array=[round(v*0.15,1) for v in bar_med_f],
-                                              color="rgba(255,255,255,.34)", thickness=1.4, width=4)))
-        fig_bar.update_traces(marker_cornerradius=6)
+                                              color=BRAND["black"], thickness=1.2, width=4)))
+        fig_bar.update_traces(marker_cornerradius=2)
         st.plotly_chart(style_fig(fig_bar, 330, "End-Use Median EUI \u00b7 error bars show \u00b115%",
                                   legend=False, ytitle="kWh/m\u00b2\u00b7yr"),
                         use_container_width=True, config={"displayModeBar": False})
@@ -1970,12 +2103,12 @@ elif st.session_state.page == PAGE_EXPLORER:
 
         section("Percentile Distribution \u00b7 EUI", "Where projects sit across the portfolio", "bar")
         sorted_pcts = sorted(bm["pct_data"])
-        bar_colors  = [UI["ok"] if v<=bm["good_eui"] else UI["cyan"] if v<=bm["median_eui"] else UI["warn"] if v<=bm["high_eui"] else UI["err"] for v in sorted_pcts]
+        bar_colors  = [UI["ok"] if v<=bm["good_eui"] else BRAND["marine"] if v<=bm["median_eui"] else UI["warn"] if v<=bm["high_eui"] else UI["err"] for v in sorted_pcts]
         fig_pct = go.Figure(go.Bar(x=[f"{i*10}th" for i in range(1,11)], y=sorted_pcts, marker_color=bar_colors,
-            marker_cornerradius=6,
+            marker_cornerradius=2,
             hovertemplate="<b>%{x} percentile</b><br>EUI: %{y} kWh/m\u00b2\u00b7yr<extra></extra>"))
         fig_pct.add_hline(y=bm["good_eui"],   line_dash="dot",  line_color=UI["ok"],   line_width=1.4, opacity=.8)
-        fig_pct.add_hline(y=bm["median_eui"], line_dash="dash", line_color=UI["cyan"], line_width=1.8, opacity=.9)
+        fig_pct.add_hline(y=bm["median_eui"], line_dash="dash", line_color=BRAND["black"], line_width=1.8, opacity=.9)
         fig_pct.add_hline(y=bm["high_eui"],   line_dash="dot",  line_color=UI["err"],  line_width=1.4, opacity=.8)
         st.plotly_chart(style_fig(fig_pct, 310, legend=False, xtitle="Percentile", ytitle="EUI (kWh/m\u00b2\u00b7yr)"),
                         use_container_width=True, config={"displayModeBar": False})
@@ -1984,12 +2117,12 @@ elif st.session_state.page == PAGE_EXPLORER:
         if bm.get("median_tedi") and bm.get("tedi_pct_data"):
             section("Percentile Distribution \u00b7 TEDI", "Thermal demand across the portfolio", "flame")
             sorted_tedi = sorted(bm["tedi_pct_data"])
-            tedi_colors = [UI["ok"] if v<=bm["good_tedi"] else UI["cyan"] if v<=bm["median_tedi"] else UI["warn"] if v<=bm["high_tedi"] else UI["err"] for v in sorted_tedi]
+            tedi_colors = [UI["ok"] if v<=bm["good_tedi"] else BRAND["marine"] if v<=bm["median_tedi"] else UI["warn"] if v<=bm["high_tedi"] else UI["err"] for v in sorted_tedi]
             fig_tedi = go.Figure(go.Bar(x=[f"{i*10}th" for i in range(1,11)], y=sorted_tedi, marker_color=tedi_colors,
-                marker_cornerradius=6,
+                marker_cornerradius=2,
                 hovertemplate="<b>%{x} percentile</b><br>TEDI: %{y} kWh/m\u00b2\u00b7yr<extra></extra>"))
             fig_tedi.add_hline(y=bm["good_tedi"],   line_dash="dot",  line_color=UI["ok"],   line_width=1.4, opacity=.8)
-            fig_tedi.add_hline(y=bm["median_tedi"], line_dash="dash", line_color=UI["cyan"], line_width=1.8, opacity=.9)
+            fig_tedi.add_hline(y=bm["median_tedi"], line_dash="dash", line_color=BRAND["black"], line_width=1.8, opacity=.9)
             fig_tedi.add_hline(y=bm["high_tedi"],   line_dash="dot",  line_color=UI["err"],  line_width=1.4, opacity=.8)
             st.plotly_chart(style_fig(fig_tedi, 310, legend=False, xtitle="Percentile", ytitle="TEDI (kWh/m\u00b2\u00b7yr)"),
                             use_container_width=True, config={"displayModeBar": False})
@@ -2286,18 +2419,19 @@ else:
                          f"{phase_disp} &middot; {meta['software']}")
         pct_block = ""
         if pct:
-            pct_block = (f'<div style="text-align:right;padding-left:22px;border-left:1px solid rgba(255,255,255,.10)">'
-                         f'<div style="font-size:44px;font-weight:800;color:#fff;line-height:1;letter-spacing:-.04em">'
+            pct_block = (f'<div style="text-align:right;padding-left:22px;border-left:1px solid {UI["bd"]}">'
+                         f'<div style="font-family:{FONT_SERIF};font-size:46px;font-weight:700;'
+                         f'color:{UI["tx"]};line-height:1;letter-spacing:-.02em">'
                          f'{pct}<span style="font-size:19px;color:{UI["tx3"]}">th</span></div>'
                          f'<div style="font-size:10.5px;color:{UI["tx3"]};text-transform:uppercase;'
                          f'letter-spacing:.11em;font-weight:700;margin-top:5px">Percentile &middot; lower is better</div></div>')
 
-        st.markdown(f'''<div class="ei-card rise" style="border-color:{overall_accent}44;
-            background:linear-gradient(140deg,{overall_accent}14,rgba(22,27,34,.94));padding:22px 26px;margin-bottom:6px">
+        st.markdown(f'''<div class="ei-card rise" style="border:1px solid {UI['bd']};
+            border-left:5px solid {overall_accent};background:{BRAND['mist']};padding:22px 26px;margin-bottom:6px">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:22px;flex-wrap:wrap">
             <div style="min-width:260px">
               <div style="display:flex;align-items:center;gap:11px;flex-wrap:wrap">
-                <span style="font-size:27px;font-weight:800;color:#fff;letter-spacing:-.03em">{proj_name}</span>
+                <span style="font-family:{FONT_SERIF};font-size:28px;font-weight:700;color:{UI['tx']};letter-spacing:-.01em">{proj_name}</span>
                 {pill(overall, overall_tone)}
               </div>
               <div style="font-size:13px;color:{UI['tx3']};margin-top:7px">{info_line}</div>
@@ -2389,13 +2523,13 @@ else:
         with cc2:
             if bm:
                 sorted_pcts=sorted(bm["pct_data"])
-                bar_colors=[UI["ok"] if v<=bm["good_eui"] else UI["cyan"] if v<=bm["median_eui"] else UI["warn"] if v<=bm["high_eui"] else UI["err"] for v in sorted_pcts]
+                bar_colors=[UI["ok"] if v<=bm["good_eui"] else BRAND["marine"] if v<=bm["median_eui"] else UI["warn"] if v<=bm["high_eui"] else UI["err"] for v in sorted_pcts]
                 fig_pct=go.Figure(go.Bar(x=[f"{i*10}th" for i in range(1,11)],y=sorted_pcts,marker_color=bar_colors,
-                    marker_cornerradius=6, opacity=.55,
+                    marker_cornerradius=2, opacity=.85,
                     hovertemplate="<b>%{x} percentile</b><br>EUI: %{y} kWh/m\u00b2\u00b7yr<extra></extra>"))
-                fig_pct.add_hline(y=kpis["total_eui"], line_dash="dash", line_color="#FFFFFF", line_width=2,
+                fig_pct.add_hline(y=kpis["total_eui"], line_dash="dash", line_color=BRAND["black"], line_width=2,
                     annotation_text=f"  Your model \u00b7 {kpis['total_eui']}",
-                    annotation_font=dict(color="#FFFFFF", size=12), annotation_position="top left")
+                    annotation_font=dict(color=BRAND["black"], size=12), annotation_position="top left")
                 st.plotly_chart(style_fig(fig_pct, 340, "Portfolio Ranking \u00b7 lower is better", legend=False,
                                           xtitle="Percentile rank of similar buildings", ytitle="EUI (kWh/m\u00b2\u00b7yr)"),
                                 use_container_width=True, config={"displayModeBar": False})
@@ -2411,19 +2545,19 @@ else:
             # Benchmark median bars with ±15% error bars
             fig_cmp.add_trace(go.Bar(
                 name="Benchmark Median", x=eu_l2, y=bm_med,
-                marker_color="rgba(255,255,255,.16)", marker_cornerradius=5,
+                marker_color=BRAND["fossil"], marker_cornerradius=2,
                 hovertemplate="<b>%{x}</b><br>Benchmark %{y:.1f}<extra></extra>",
                 error_y=dict(type="data", symmetric=True,
                              array=[round(v*0.15,1) for v in bm_med],
-                             color="rgba(255,255,255,.34)", thickness=1.4, width=5),
+                             color=BRAND["black"], thickness=1.2, width=5),
             ))
             # Your model bars, labelled with % difference vs benchmark median
             pct_labels = [f"{(y-m)/m*100:+.0f}%" if m else "" for y, m in zip(your_eu, bm_med)]
             fig_cmp.add_trace(go.Bar(
                 name="Your Model", x=eu_l2, y=your_eu,
-                marker_color=UI["cyan"], marker_cornerradius=5,
+                marker_color=BRAND["orange"], marker_cornerradius=2,
                 text=pct_labels, textposition="outside",
-                textfont=dict(size=11, color=UI["tx2"], family="Inter, sans-serif"),
+                textfont=dict(size=11, color=UI["tx2"], family=FONT_SANS),
                 hovertemplate="<b>%{x}</b><br>Your model %{y:.1f}<extra></extra>",
                 cliponaxis=False,
             ))
@@ -2528,7 +2662,7 @@ else:
         section("Validation Results", "Automated QA/QC checks against the benchmark median", "shield")
 
         _vt = {"pass": ("PASSED", UI["ok"]), "warn": ("WARNING", UI["warn"]),
-               "fail": ("FAILED", UI["err"]), "info": ("INFO", UI["cyan"])}
+               "fail": ("FAILED", UI["err"]), "info": ("INFO", UI["info"])}
         st.markdown(f'''<div class="vsum">
           <div class="vsum-c"><div class="vsum-n" style="color:{UI['ok']}">{fc['pass']}</div>
             <div class="vsum-l">Passed</div></div>
