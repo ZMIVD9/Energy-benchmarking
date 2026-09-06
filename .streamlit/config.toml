@@ -1,0 +1,63 @@
+# Streamlit base theme — Stantec visual identity
+# ---------------------------------------------------------------------------
+# Save this as  .streamlit/config.toml  next to app.py, and commit it so
+# Streamlit Community Cloud applies it on deploy.
+#
+# WHY THIS FILE MATTERS
+# The stylesheet inside app.py paints the page surfaces, but it cannot reach
+# Streamlit's own components. The data grid (st.dataframe / st.data_editor) is
+# drawn on an HTML canvas, so no CSS rule — not even the --gdg-* custom
+# properties — can recolour it. The same is true of the "Running…" pill,
+# tooltips, menus and toasts. All of those read this theme instead. Without it
+# they stay on Streamlit's dark default and appear as black panels on the
+# light layout.
+#
+# Colours are the kleurenpalet from the visual identity guidelines:
+#   Stantec-oranje #ED6631 · Wit #FFFFFF · Mist #F2EFEC
+#   Kiezelsteen #E2DDDB · Fossiel #C9C4BD · Zwart #000000
+#   Fern #1A845C · Marine #2A73D9 · Kurkuma #F3BE0A · Himalayazout #F4B5B5
+
+[theme]
+base                     = "light"
+primaryColor             = "#ED6631"   # Stantec-oranje — buttons, selection, focus
+backgroundColor          = "#FFFFFF"   # Wit — the canvas
+secondaryBackgroundColor = "#F2EFEC"   # Mist — cards, table headers, sidebar
+textColor                = "#000000"   # Zwart — text is black or white only
+
+# --- Typography ------------------------------------------------------------
+# The faces themselves are loaded by the @import at the top of app.py's
+# stylesheet; these keys just tell Streamlit's own components which to use.
+# If Google Fonts is blocked on the corporate network, self-host the .woff2
+# files and add a [[theme.fontFaces]] entry per weight pointing at them.
+font        = "Roboto, Arial, sans-serif"
+headingFont = "Source Serif 4, Georgia, serif"
+
+# --- Tables and borders ----------------------------------------------------
+# This is what recolours the QA/QC comparison grid: Mist header, Fossiel-toned
+# rules, square corners.
+dataframeHeaderBackgroundColor = "#F2EFEC"   # Mist
+dataframeBorderColor           = "#DED8D3"
+borderColor                    = "#DED8D3"
+showWidgetBorder               = true
+baseRadius                     = "4px"
+buttonRadius                   = "4px"
+
+# --- Semantic and chart colours -------------------------------------------
+linkColor          = "#000000"
+codeBackgroundColor = "#F2EFEC"
+greenColor         = "#1A845C"   # Fern
+blueColor          = "#2A73D9"   # Marine
+yellowColor        = "#F3BE0A"   # Kurkuma
+orangeColor        = "#ED6631"   # Stantec-oranje
+chartCategoricalColors = ["#ED6631", "#2A73D9", "#1A845C", "#F3BE0A",
+                          "#F4B5B5", "#000000", "#C9C4BD"]
+
+# Note on versions: the keys below [theme] beyond base/primaryColor/
+# backgroundColor/secondaryBackgroundColor/textColor/font were added in
+# Streamlit 1.4x-1.6x. Older versions ignore the ones they do not recognise
+# and start normally, so this file is safe to deploy as-is.
+
+[client]
+# Drops the Deploy button and hamburger from the header; the "Running…" pill
+# stays, which is the only feedback during the benchmark sheet fetch.
+toolbarMode = "minimal"
