@@ -459,7 +459,32 @@ div[data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) [data-test
 div[data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]) [data-testid="stAlertContainer"]{box-shadow:inset 4px 0 0 var(--kurkuma)}
 div[data-testid="stAlert"]:has([data-testid="stAlertContentError"])   [data-testid="stAlertContainer"]{box-shadow:inset 4px 0 0 var(--err)}
 
-#MainMenu,footer,header[data-testid="stHeader"]{visibility:hidden;height:0}
+/* Streamlit's own chrome — the "Running…" status pill, toasts, tooltips and
+   the connection banner — is painted by the base theme, not by this stylesheet.
+   .streamlit/config.toml sets that base theme to light; these rules make the
+   pieces that stay visible match the identity. */
+[data-testid="stStatusWidget"]{
+  visibility:visible!important;height:auto!important;
+  background:var(--mist)!important;border:1px solid var(--bd)!important;
+  border-left:4px solid var(--orange)!important;border-radius:var(--r)!important;
+  box-shadow:0 2px 8px rgba(0,0,0,.10)!important}
+[data-testid="stStatusWidget"] *,[data-testid="stStatusWidget"] label{
+  color:var(--tx)!important;font-family:var(--sans)!important}
+[data-testid="stStatusWidget"] code{background:var(--white)!important;color:var(--tx)!important;
+  border:1px solid var(--bd)!important}
+[data-testid="stStatusWidget"] svg{fill:var(--orange)!important;color:var(--orange)!important}
+[data-testid="stToast"]{background:var(--mist)!important;color:var(--tx)!important;
+  border:1px solid var(--bd)!important;border-radius:var(--r)!important}
+[data-testid="stTooltipContent"],[data-baseweb="tooltip"]{
+  background:var(--black)!important;color:var(--white)!important;border-radius:var(--r)!important;
+  font-family:var(--sans)!important}
+[data-testid="stSpinner"] p,[data-testid="stSpinner"] div{color:var(--tx2)!important}
+
+/* Hide the menu, Deploy button and footer, but keep the header itself in flow:
+   the "Running…" status pill lives inside it and is the only feedback the user
+   gets while the benchmark sheet loads. */
+#MainMenu,[data-testid="stMainMenu"],[data-testid="stAppDeployButton"],footer{display:none!important}
+header[data-testid="stHeader"]{background:transparent!important;box-shadow:none!important}
 </style>
 """, unsafe_allow_html=True)
 
