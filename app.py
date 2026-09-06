@@ -1310,14 +1310,36 @@ def build_necb_rows(vals, ref_vals, savings_map):
 #      with a service-account JWT. The standard route.
 # Both are configured in .streamlit/secrets.toml; see GOOGLE_SHEETS_SETUP.md.
 
+# Submissions land here as Pending and are promoted to PROJECT_SHEET_NAME on
+# approval. The app only ever writes to the submissions tab.
+SUBMISSIONS_SHEET_NAME = "Submissions"
 PROJECT_SHEET_NAME = "Project Results"
-PROJECT_RESULT_HEADERS = [
+
+# Columns the app sends, in order. The Apps Script prepends Submission ID and
+# Submitted At and appends Status / Reviewed By / Reviewed On / Review Comment,
+# so a submitter cannot set their own approval state.
+SUBMISSION_HEADERS = [
+    "Modeller", "Modeller Email",
     "Project Name", "Building Type", "City", "Climate Zone", "Subtype",
     "Software", "Model Type", "Phase", "Date", "Area (m²)", "Total EUI", "TEDI",
     "Elec EUI", "Gas EUI", "Heating EUI", "Cooling EUI", "Fan EUI",
     "Lighting EUI", "DHW EUI", "Receptacle EUI", "Pumps EUI", "GHGI",
     "Percentile", "QA Flags", "Notes",
 ]
+# Columns the Apps Script adds around the client's. The app only needs these
+# when writing directly with a service account, where nothing stamps them.
+SUBMISSION_LEADING = ["Submission ID", "Submitted At"]
+SUBMISSION_TRAILING = ["Status", "Reviewed By", "Reviewed On", "Review Comment"]
+SUBMISSION_SHEET_HEADERS = SUBMISSION_LEADING + SUBMISSION_HEADERS + SUBMISSION_TRAILING
+
+# Kept for the manual-copy fallback and any older sheets.
+PROJECT_RESULT_HEADERS = SUBMISSION_HEADERS
+
+
+def _valid_email(value):
+    """Loose sanity check — catches typos, not a deliverability guarantee."""
+    import re
+    return bool(re.match(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$", (value or "").strip()))
 
 _HTTP_TIMEOUT = 20            # seconds — never let a write hang the app
 _TOKEN_CACHE = {"token": None, "expires": 0.0}
@@ -1437,15 +1459,26 @@ def _append_via_webhook(webhook, sheet_name, row, headers=None):
     body = (resp.text or "").strip()
     # Apps Script answers 200 with a JSON body even for its own errors.
     if resp.ok and ('"ok":true' in body.replace(" ", "") or body.lower() == "ok"):
-        return True, "Success"
+        try:
+            import json
+            return True, json.loads(body).get("id") or "Success"
+        except Exception:
+            return True, "Success"
     if resp.status_code in (301, 302) or "accounts.google.com" in body:
         return False, ("The web app redirected to a Google sign-in — redeploy it "
                        "with Execute as: Me and Who has access: Anyone.")
     return False, f"Webhook responded {resp.status_code}: {body[:300]}"
 
 
-def append_to_google_sheet(sheet_name: str, row: list, headers: list = None):
-    """Append one row to the spreadsheet. Returns (ok, message)."""
+def append_to_google_sheet(sheet_name: str, row: list, headers: list = None,
+                          pending_workflow: bool = False):
+    """Append one row to the spreadsheet. Returns (ok, message).
+
+    With ``pending_workflow`` the row is a review submission. The Apps Script
+    stamps the id, timestamp and Pending status itself; when writing directly
+    with a service account there is no script, so the app fills those columns
+    in — otherwise the row would arrive with no status at all.
+    """
     try:
         try:
             webhook = st.secrets.get("SHEETS_WEBHOOK_URL", None)
@@ -1464,6 +1497,13 @@ def append_to_google_sheet(sheet_name: str, row: list, headers: list = None):
 
         import requests
         from urllib.parse import quote
+        if pending_workflow:
+            from datetime import datetime
+            row = ([f"MAN-{datetime.now():%Y%m%d-%H%M%S}",
+                    datetime.now().isoformat(timespec="seconds")]
+                   + list(row) + ["Pending", "", "", ""])
+            headers = SUBMISSION_SHEET_HEADERS
+
         token = _sheets_access_token(creds)
         _ensure_tab(sheet_name, token, headers)
 
@@ -2918,19 +2958,25 @@ else:
             if warn_count > 0:
                 st.warning(f"⚠️ This model has **{warn_count} review flag(s)**. You can still add it to the database, but review the flags first.")
 
-            with st.expander("What does adding to the benchmark do?", expanded=False):
+            with st.expander("What happens after you submit?", expanded=False):
                 st.markdown("""
-When you add this model to the benchmark database, it contributes to the pool of real projects used for future comparisons.
+Submitting sends this model to the review queue. It does **not** enter the
+benchmark pool straight away.
 
 **What gets recorded:**
+- Your name and email, so the reviewer knows who to come back to
 - Project name, building type, city, climate zone, subtype
 - Total EUI, all end-use EUIs, GHGI
 - Floor area, model type, phase, date, software
 
-**How it updates the benchmark:**
-- Your project's EUI is added to the percentile dataset for that building type/city/subtype
-- The median EUI and end-use percentages in the Benchmarks sheet are **not changed automatically** — a senior reviewer can periodically recalculate and update those based on accumulated project data
-- All submitted projects are visible in the **Project Results** tab of the Google Sheet for full audit trail
+**The review step:**
+- The row lands on the **Submissions** tab marked *Pending*, and the reviewer is emailed
+- A senior reviewer approves or rejects it; approved rows are copied to
+  **Project Results** with the reviewer's name and the date
+- You get an email either way, with the reviewer's comment if there is one
+- Median EUI and end-use percentages in the Benchmarks sheet are still **not
+  changed automatically** — a reviewer recalculates those periodically from the
+  accumulated approved projects
                 """)
 
             with st.form("add_to_benchmark_form"):
@@ -2938,10 +2984,20 @@ When you add this model to the benchmark database, it contributes to the pool of
                 fc1, fc2, fc3 = st.columns(3)
                 with fc1:
                     confirm_name    = st.text_input("Project Name",    value=meta["project_name"])
+                    # Remembered for the session so a modeller submitting several
+                    # projects in a row types this once.
+                    confirm_modeller = st.text_input(
+                        "Modeller *", value=st.session_state.get("modeller_name", ""),
+                        placeholder="First Last",
+                        help="Who built this model — recorded with the submission.")
+                    confirm_email = st.text_input(
+                        "Modeller email *", value=st.session_state.get("modeller_email", ""),
+                        placeholder="first.last@stantec.com",
+                        help="Where the approval or rejection notice is sent.")
                 with fc2:
                     confirm_subtype = st.text_input("Benchmark Subtype", value=meta.get("subtype","General"),
                                                     help="e.g. Boiler + VAV · Medium, Heat Pump + DOAS")
-                    confirm_notes   = st.text_area("Notes (optional)", placeholder="e.g. NECB 2020 proposed model, 100% design stage", height=80)
+                    confirm_notes   = st.text_area("Notes for the reviewer (optional)", placeholder="e.g. NECB 2020 proposed model, 100% design stage", height=80)
                 with fc3:
                     st.markdown("**Summary of values being submitted:**")
                     st.markdown(f"""
@@ -2955,14 +3011,28 @@ When you add this model to the benchmark database, it contributes to the pool of
 | QA/QC | ✅ {pass_count} pass · ⚠️ {warn_count} review |
                     """)
 
-                submitted = st.form_submit_button("Add to Benchmark Database", type="primary", use_container_width=True)
+                submitted = st.form_submit_button("Submit for Review", type="primary", use_container_width=True)
 
                 if submitted:
+                    problems = []
                     if not confirm_name.strip():
-                        st.error("Please enter a project name.")
+                        problems.append("a project name")
+                    if not confirm_modeller.strip():
+                        problems.append("the modeller's name")
+                    if not _valid_email(confirm_email):
+                        problems.append("a valid modeller email")
+                    if problems:
+                        st.error("Please enter " + ", ".join(problems) + ".")
                     else:
-                        # Build the row to append to "Project Results" sheet
+                        # Keep the modeller's details for the rest of the session.
+                        st.session_state.modeller_name = confirm_modeller.strip()
+                        st.session_state.modeller_email = confirm_email.strip()
+                        # Build the row for the "Submissions" sheet. Submission ID,
+                        # timestamp, status and reviewer columns are filled in
+                        # server-side by the Apps Script — never by this client.
                         project_row = [
+                            confirm_modeller.strip(),
+                            confirm_email.strip(),
                             confirm_name.strip(),
                             meta["building_type"],
                             meta["city"],
@@ -2990,13 +3060,19 @@ When you add this model to the benchmark database, it contributes to the pool of
                             confirm_notes.strip(),
                         ]
 
-                        with st.spinner("Writing to Google Sheets…"):
+                        with st.spinner("Sending for review…"):
                             ok, msg = append_to_google_sheet(
-                                PROJECT_SHEET_NAME, project_row, PROJECT_RESULT_HEADERS)
+                                SUBMISSIONS_SHEET_NAME, project_row, SUBMISSION_HEADERS,
+                                pending_workflow=True)
                         if ok:
-                            st.success(f"✅ **{confirm_name}** has been added to the benchmark database. Thank you!")
-                            st.info("💡 A senior reviewer can periodically update the Benchmarks sheet median EUI and percentile data using the accumulated project results.")
-                            load_benchmarks.clear()
+                            _ref = f" Reference **{msg}**." if msg and msg != "Success" else ""
+                            st.success(f"✅ **{confirm_name}** has been submitted for review.{_ref} "
+                                       f"The reviewer has been notified, and "
+                                       f"{confirm_email.strip()} will get an email once it is "
+                                       f"approved or rejected.")
+                            st.info("💡 Approved projects are copied to the **Project Results** "
+                                    "tab. A senior reviewer periodically recalculates the "
+                                    "Benchmarks medians and percentiles from those.")
                         else:
                             # Fallback — show the data so user can manually add it
                             st.warning(f"⚠️ Could not write to Google Sheets automatically: {msg}")
@@ -3022,8 +3098,9 @@ When you add this model to the benchmark database, it contributes to the pool of
                                         "`GOOGLE_SHEETS_SETUP.md` in the repo has both "
                                         "procedures step by step.")
                             st.markdown(f"**In the meantime, copy this row into the "
-                                        f"'{PROJECT_SHEET_NAME}' sheet:**")
-                            st.dataframe(pd.DataFrame([dict(zip(PROJECT_RESULT_HEADERS, project_row))]),
+                                        f"'{SUBMISSIONS_SHEET_NAME}' sheet and set its "
+                                        f"Status to Pending:**")
+                            st.dataframe(pd.DataFrame([dict(zip(SUBMISSION_HEADERS, project_row))]),
                                         use_container_width=True, hide_index=True)
 
 
