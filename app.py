@@ -2478,22 +2478,27 @@ else:
                          f'<div style="font-size:10.5px;color:{UI["tx3"]};text-transform:uppercase;'
                          f'letter-spacing:.11em;font-weight:700;margin-top:5px">Percentile &middot; lower is better</div></div>')
 
-        st.markdown(f'''<div class="ei-card rise" style="border:1px solid {UI['bd']};
-            border-left:5px solid {overall_accent};background:{BRAND['mist']};padding:22px 26px;margin-bottom:6px">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:22px;flex-wrap:wrap">
-            <div style="min-width:260px">
-              <div style="display:flex;align-items:center;gap:11px;flex-wrap:wrap">
-                <span style="font-family:{FONT_SERIF};font-size:28px;font-weight:700;color:{UI['tx']};letter-spacing:-.01em">{proj_name}</span>
-                {pill(overall, overall_tone)}
-              </div>
-              <div style="font-size:13px;color:{UI['tx3']};margin-top:7px">{info_line}</div>
-              <div style="display:flex;gap:9px;margin-top:13px;flex-wrap:wrap">
-                {pill(f"{fc['pass']} Pass", "ok")}{pill(f"{fc['warn']} Review", "warn")}{pill(f"{fc['fail']} Fail", "err")}
-              </div>
-            </div>
-            {pct_block}
-          </div>
-        </div>''', unsafe_allow_html=True)
+        # Emitted as one unbroken string on purpose. When `pct_block` is empty a
+        # multi-line template leaves a whitespace-only line, which closes the HTML
+        # block for the markdown parser — the indented lines after it are then read
+        # as an indented code block and the closing </div> tags render as text.
+        _pills = (pill(f"{fc['pass']} Pass", "ok") + pill(f"{fc['warn']} Review", "warn")
+                  + pill(f"{fc['fail']} Fail", "err"))
+        st.markdown(
+            f'<div class="ei-card rise" style="border:1px solid {UI["bd"]};'
+            f'border-left:5px solid {overall_accent};background:{BRAND["mist"]};'
+            f'padding:22px 26px;margin-bottom:6px">'
+            f'<div style="display:flex;align-items:center;justify-content:space-between;'
+            f'gap:22px;flex-wrap:wrap">'
+            f'<div style="min-width:260px">'
+            f'<div style="display:flex;align-items:center;gap:11px;flex-wrap:wrap">'
+            f'<span style="font-family:{FONT_SERIF};font-size:28px;font-weight:700;'
+            f'color:{UI["tx"]};letter-spacing:-.01em">{proj_name}</span>'
+            f'{pill(overall, overall_tone)}</div>'
+            f'<div style="font-size:13px;color:{UI["tx3"]};margin-top:7px">{info_line}</div>'
+            f'<div style="display:flex;gap:9px;margin-top:13px;flex-wrap:wrap">{_pills}</div>'
+            f'</div>{pct_block}</div></div>',
+            unsafe_allow_html=True)
 
         # ── Section 1: Executive Summary ──
         section("Executive Summary", "Headline performance vs the benchmark portfolio", "gauge")
