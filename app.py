@@ -1,3 +1,30 @@
+"""
+Energy Model Benchmarking & QA/QC Platform
+===========================================
+Run:  streamlit run app.py
+Deps: pip install streamlit pandas plotly openpyxl reportlab
+
+IMPORTANT: Keep benchmarks.xlsx in the same folder as app.py
+
+Branding
+--------
+The interface follows the Stantec visual identity and design guidelines:
+
+  Colour       Wit / Mist / Kiezelsteen / Fossiel carry the surfaces, Zwart
+               carries the type, and Stantec-oranje (#ED6631) is the house
+               colour used for primary actions, accents and the Lens-tag.
+               Secondary colours (Fern, Marine, Kurkuma, Himalayazout) are
+               reserved for status and data visualisation.
+  Type         Source Serif 4 for headings and figures, Roboto / Roboto
+               Condensed for body copy, labels and UI chrome.
+  Contrast     Text is black or white only. Type on orange is black, per the
+               WCAG table in the guidelines.
+
+Logo: place the approved artwork at ``assets/stantec_logo.svg`` (or .png)
+next to this file. The header loads it automatically; until then a
+Lens-tag style orange placeholder is shown.
+"""
+
 import io
 import os
 import streamlit as st
