@@ -1302,70 +1302,197 @@ def build_necb_rows(vals, ref_vals, savings_map):
     return rows
 
 
-def append_to_google_sheet(sheet_name: str, row: list):
-    """
-    Append a row to a Google Sheet using the Sheets API via requests.
-    Requires SHEET_ID and GOOGLE_SERVICE_ACCOUNT in st.secrets.
-    Falls back gracefully if credentials are not configured.
-    """
+# ── Writing back to Google Sheets ─────────────────────────────────────────────
+# Two supported routes, tried in this order:
+#   1. SHEETS_WEBHOOK_URL  — an Apps Script web app bound to the spreadsheet.
+#      No Google Cloud project needed, so it works where IT restricts GCP.
+#   2. GOOGLE_SERVICE_ACCOUNT (or gcp_service_account) — the Sheets REST API
+#      with a service-account JWT. The standard route.
+# Both are configured in .streamlit/secrets.toml; see GOOGLE_SHEETS_SETUP.md.
+
+PROJECT_SHEET_NAME = "Project Results"
+PROJECT_RESULT_HEADERS = [
+    "Project Name", "Building Type", "City", "Climate Zone", "Subtype",
+    "Software", "Model Type", "Phase", "Date", "Area (m²)", "Total EUI", "TEDI",
+    "Elec EUI", "Gas EUI", "Heating EUI", "Cooling EUI", "Fan EUI",
+    "Lighting EUI", "DHW EUI", "Receptacle EUI", "Pumps EUI", "GHGI",
+    "Percentile", "QA Flags", "Notes",
+]
+
+_HTTP_TIMEOUT = 20            # seconds — never let a write hang the app
+_TOKEN_CACHE = {"token": None, "expires": 0.0}
+
+
+def _service_account_creds():
+    """Service-account mapping from secrets, under either accepted key name."""
+    import json
+    for key in ("GOOGLE_SERVICE_ACCOUNT", "gcp_service_account"):
+        try:
+            raw = st.secrets.get(key, None)
+        except Exception:
+            raw = None
+        if raw:
+            try:
+                return json.loads(raw) if isinstance(raw, str) else dict(raw)
+            except Exception as e:
+                raise ValueError(f"{key} in secrets is not valid JSON: {e}")
+    return None
+
+
+def sheets_account_email():
+    """Email to share the spreadsheet with, or '' when no key is configured."""
     try:
-        import json, requests
-        creds_raw = st.secrets.get("GOOGLE_SERVICE_ACCOUNT", None)
-        if not creds_raw:
-            return False, "No Google service account configured in secrets."
+        creds = _service_account_creds()
+        return (creds or {}).get("client_email", "")
+    except Exception:
+        return ""
 
-        creds = json.loads(creds_raw) if isinstance(creds_raw, str) else dict(creds_raw)
 
-        # Get OAuth2 token using service account
-        import time, base64, hashlib
-        from urllib.parse import urlencode
+def _sheets_access_token(creds):
+    """Signed JWT exchanged for an OAuth access token, cached until it expires."""
+    import time, json, base64, requests
+    if _TOKEN_CACHE["token"] and _TOKEN_CACHE["expires"] > time.time() + 60:
+        return _TOKEN_CACHE["token"]
 
-        # Build JWT
-        header = base64.urlsafe_b64encode(
-            json.dumps({"alg":"RS256","typ":"JWT"}).encode()
-        ).rstrip(b"=").decode()
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
 
-        now = int(time.time())
-        claim = base64.urlsafe_b64encode(json.dumps({
-            "iss": creds["client_email"],
-            "scope": "https://www.googleapis.com/auth/spreadsheets",
-            "aud": "https://oauth2.googleapis.com/token",
-            "iat": now, "exp": now + 3600
-        }).encode()).rstrip(b"=").decode()
+    def _b64(obj):
+        return base64.urlsafe_b64encode(json.dumps(obj).encode()).rstrip(b"=").decode()
 
-        from cryptography.hazmat.primitives import hashes, serialization
-        from cryptography.hazmat.primitives.asymmetric import padding
+    now = int(time.time())
+    header = _b64({"alg": "RS256", "typ": "JWT"})
+    claim = _b64({
+        "iss": creds["client_email"],
+        "scope": "https://www.googleapis.com/auth/spreadsheets",
+        "aud": "https://oauth2.googleapis.com/token",
+        "iat": now, "exp": now + 3600,
+    })
+    # Secrets managers often turn the key's "\n" escapes into literal backslash-n.
+    pem = creds["private_key"].replace("\\n", "\n").encode()
+    key = serialization.load_pem_private_key(pem, password=None)
+    sig = base64.urlsafe_b64encode(
+        key.sign(f"{header}.{claim}".encode(), padding.PKCS1v15(), hashes.SHA256())
+    ).rstrip(b"=").decode()
 
-        private_key = serialization.load_pem_private_key(
-            creds["private_key"].encode(), password=None
-        )
-        sig_input = f"{header}.{claim}".encode()
-        signature = base64.urlsafe_b64encode(
-            private_key.sign(sig_input, padding.PKCS1v15(), hashes.SHA256())
-        ).rstrip(b"=").decode()
+    resp = requests.post(
+        "https://oauth2.googleapis.com/token",
+        data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+              "assertion": f"{header}.{claim}.{sig}"},
+        timeout=_HTTP_TIMEOUT,
+    )
+    token = resp.json().get("access_token") if resp.ok else None
+    if not token:
+        detail = resp.text[:300]
+        if "invalid_grant" in detail:
+            detail += ("  (an 'invalid_grant' usually means the private key was "
+                       "pasted incorrectly or the server clock is off)")
+        raise RuntimeError(f"Could not get an access token: {detail}")
 
-        jwt = f"{header}.{claim}.{signature}"
+    _TOKEN_CACHE.update(token=token, expires=time.time() + 3300)
+    return token
 
-        token_resp = requests.post("https://oauth2.googleapis.com/token", data={
-            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-            "assertion": jwt,
-        })
-        access_token = token_resp.json().get("access_token")
-        if not access_token:
-            return False, f"Could not get access token: {token_resp.text}"
 
-        # Append row to sheet
-        url = (f"https://sheets.googleapis.com/v4/spreadsheets/{SHEET_ID}"
-               f"/values/{sheet_name}!A1:append?valueInputOption=USER_ENTERED"
-               f"&insertDataOption=INSERT_ROWS")
-        resp = requests.post(url,
-            headers={"Authorization": f"Bearer {access_token}"},
-            json={"values": [row]}
-        )
-        if resp.status_code == 200:
+def _ensure_tab(sheet_name, token, headers):
+    """Create the tab and write its header row if it does not exist yet."""
+    import requests
+    meta = requests.get(
+        f"https://sheets.googleapis.com/v4/spreadsheets/{SHEET_ID}"
+        "?fields=sheets.properties.title",
+        headers={"Authorization": f"Bearer {token}"}, timeout=_HTTP_TIMEOUT)
+    if not meta.ok:
+        return  # let the append call report the real error
+    titles = [s["properties"]["title"] for s in meta.json().get("sheets", [])]
+    if sheet_name in titles:
+        return
+    requests.post(
+        f"https://sheets.googleapis.com/v4/spreadsheets/{SHEET_ID}:batchUpdate",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"requests": [{"addSheet": {"properties": {"title": sheet_name}}}]},
+        timeout=_HTTP_TIMEOUT)
+    if headers:
+        from urllib.parse import quote
+        requests.post(
+            f"https://sheets.googleapis.com/v4/spreadsheets/{SHEET_ID}/values/"
+            f"{quote(f'{sheet_name}!A1')}:append"
+            "?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"values": [headers]}, timeout=_HTTP_TIMEOUT)
+
+
+def _append_via_webhook(webhook, sheet_name, row, headers=None):
+    """POST the row to an Apps Script web app bound to the spreadsheet."""
+    import requests
+    payload = {"sheet": sheet_name, "row": row, "headers": headers or []}
+    try:
+        secret = st.secrets.get("SHEETS_WEBHOOK_TOKEN", None)
+    except Exception:
+        secret = None
+    if secret:
+        payload["token"] = secret
+    try:
+        resp = requests.post(webhook, json=payload, timeout=_HTTP_TIMEOUT)
+    except Exception as e:
+        return False, f"Could not reach the webhook: {e}"
+    body = (resp.text or "").strip()
+    # Apps Script answers 200 with a JSON body even for its own errors.
+    if resp.ok and ('"ok":true' in body.replace(" ", "") or body.lower() == "ok"):
+        return True, "Success"
+    if resp.status_code in (301, 302) or "accounts.google.com" in body:
+        return False, ("The web app redirected to a Google sign-in — redeploy it "
+                       "with Execute as: Me and Who has access: Anyone.")
+    return False, f"Webhook responded {resp.status_code}: {body[:300]}"
+
+
+def append_to_google_sheet(sheet_name: str, row: list, headers: list = None):
+    """Append one row to the spreadsheet. Returns (ok, message)."""
+    try:
+        try:
+            webhook = st.secrets.get("SHEETS_WEBHOOK_URL", None)
+        except Exception:
+            webhook = None
+        if webhook:
+            return _append_via_webhook(webhook, sheet_name, row, headers)
+
+        creds = _service_account_creds()
+        if not creds:
+            return False, ("No Google credentials in secrets — add either "
+                           "SHEETS_WEBHOOK_URL or GOOGLE_SERVICE_ACCOUNT to "
+                           ".streamlit/secrets.toml (see GOOGLE_SHEETS_SETUP.md).")
+        if not SHEET_ID or SHEET_ID == "YOUR_SHEET_ID_HERE":
+            return False, "SHEET_ID is not set in secrets."
+
+        import requests
+        from urllib.parse import quote
+        token = _sheets_access_token(creds)
+        _ensure_tab(sheet_name, token, headers)
+
+        # The range must be quoted — a tab name containing a space (such as
+        # "Project Results") is otherwise rejected as an unparseable range.
+        rng = quote(f"'{sheet_name}'!A1")
+        resp = requests.post(
+            f"https://sheets.googleapis.com/v4/spreadsheets/{SHEET_ID}/values/{rng}"
+            ":append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"values": [row]}, timeout=_HTTP_TIMEOUT)
+
+        if resp.ok:
             return True, "Success"
-        else:
-            return False, f"Sheets API error: {resp.text}"
+
+        detail = resp.text[:400]
+        email = creds.get("client_email", "the service account")
+        if resp.status_code == 403 and "PERMISSION_DENIED" in detail:
+            if "has not been used" in detail or "disabled" in detail:
+                return False, ("The Google Sheets API is not enabled for this "
+                               "service account's project. Enable it in the Google "
+                               "Cloud console, wait a minute, and try again.")
+            return False, (f"{email} does not have access to the spreadsheet. "
+                           f"Open the sheet, press Share, and give that address "
+                           f"Editor access.")
+        if resp.status_code == 404:
+            return False, (f"Spreadsheet {SHEET_ID} not found — check SHEET_ID "
+                           f"in secrets.")
+        return False, f"Sheets API error {resp.status_code}: {detail}"
     except Exception as e:
         return False, str(e)
 
@@ -2863,7 +2990,9 @@ When you add this model to the benchmark database, it contributes to the pool of
                             confirm_notes.strip(),
                         ]
 
-                        ok, msg = append_to_google_sheet("Project Results", project_row)
+                        with st.spinner("Writing to Google Sheets…"):
+                            ok, msg = append_to_google_sheet(
+                                PROJECT_SHEET_NAME, project_row, PROJECT_RESULT_HEADERS)
                         if ok:
                             st.success(f"✅ **{confirm_name}** has been added to the benchmark database. Thank you!")
                             st.info("💡 A senior reviewer can periodically update the Benchmarks sheet median EUI and percentile data using the accumulated project results.")
@@ -2871,12 +3000,30 @@ When you add this model to the benchmark database, it contributes to the pool of
                         else:
                             # Fallback — show the data so user can manually add it
                             st.warning(f"⚠️ Could not write to Google Sheets automatically: {msg}")
-                            st.markdown("**Please manually copy this row into the 'Project Results' sheet in Google Sheets:**")
-                            headers_pr = ["Project Name","Building Type","City","Climate Zone","Subtype",
-                                          "Software","Model Type","Phase","Date","Area (m²)","Total EUI","TEDI","Elec EUI",
-                                          "Gas EUI","Heating EUI","Cooling EUI","Fan EUI","Lighting EUI","DHW EUI",
-                                          "Receptacle EUI","Pumps EUI","GHGI","Percentile","QA Flags","Notes"]
-                            st.dataframe(pd.DataFrame([dict(zip(headers_pr, project_row))]),
+                            _sa_email = sheets_account_email()
+                            with st.expander("How to switch the automatic write on"):
+                                if _sa_email:
+                                    st.markdown(
+                                        f"A service account **is** configured as "
+                                        f"`{_sa_email}`. If the message above mentions "
+                                        f"access, open the spreadsheet, press **Share**, "
+                                        f"and give that address **Editor** rights.")
+                                else:
+                                    st.markdown(
+                                        "No credentials are configured yet. Add **one** of "
+                                        "these to `.streamlit/secrets.toml` (App settings → "
+                                        "Secrets on Streamlit Community Cloud):\n\n"
+                                        "- `SHEETS_WEBHOOK_URL` — an Apps Script web app "
+                                        "bound to this spreadsheet. No Google Cloud project "
+                                        "needed.\n"
+                                        "- `GOOGLE_SERVICE_ACCOUNT` — the service-account "
+                                        "JSON key, with the sheet shared to its "
+                                        "`client_email` as Editor.\n\n"
+                                        "`GOOGLE_SHEETS_SETUP.md` in the repo has both "
+                                        "procedures step by step.")
+                            st.markdown(f"**In the meantime, copy this row into the "
+                                        f"'{PROJECT_SHEET_NAME}' sheet:**")
+                            st.dataframe(pd.DataFrame([dict(zip(PROJECT_RESULT_HEADERS, project_row))]),
                                         use_container_width=True, hide_index=True)
 
 
