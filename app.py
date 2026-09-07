@@ -655,7 +655,12 @@ def logo_mark(size=40):
             f'color:{BRAND["black"]};letter-spacing:-.02em;flex-shrink:0">EI</span>')
 
 def render_header(bm_count, page_label):
-    """Top application header: brand, environment badges, utility icons, avatar."""
+    """Top application header: the brand lockup, and nothing that does nothing.
+
+    The badge row that used to sit on the right (version, Live, benchmark count,
+    AI Ready, and five icons) was decorative — none of it was clickable and the
+    benchmark count is already in the sidebar.
+    """
     st.markdown(f'''<div class="ei-header">
       <div class="ei-brand">
         {logo_mark(40)}
@@ -663,17 +668,6 @@ def render_header(bm_count, page_label):
           <div class="ei-name">Energy Intelligence</div>
           <div class="ei-tag">Benchmarking &middot; QA/QC &middot; Analytics</div>
         </div>
-      </div>
-      <div class="ei-hactions">
-        <span class="ei-pill ver">{APP_VERSION}</span>
-        <span class="ei-pill live"><span class="ei-dot"></span>Live</span>
-        <span class="ei-pill">{icon("database",13)}&nbsp;{bm_count} Benchmarks</span>
-        <span class="ei-pill">{icon("cpu",13)}&nbsp;AI Ready</span>
-        <span class="ei-ico" title="Search">{icon("search",16)}</span>
-        <span class="ei-ico" title="Notifications">{icon("bell",16)}</span>
-        <span class="ei-ico" title="Documentation">{icon("book",16)}</span>
-        <span class="ei-ico" title="Help">{icon("help",16)}</span>
-        <span class="ei-avatar" title="Signed in">EI</span>
       </div>
     </div>''', unsafe_allow_html=True)
 
@@ -1112,7 +1106,10 @@ def load_benchmarks():
                 "province":    province,
                 "project_year":   str(row.get("Project Year/Date", row.get("Project Year", "")) or "").strip(),
                 "audit_new":      str(row.get("Audit/New", "") or "").strip(),
-                "heating_system": str(row.get("Heating System", "") or "").strip(),
+                # The Benchmarks tab column was renamed Heating System -> HVAC
+                # System. Accept either, so a sheet mid-rename still loads.
+                "heating_system": str(row.get("HVAC System",
+                                      row.get("Heating System", "")) or "").strip(),
             }
         except Exception:
             continue
