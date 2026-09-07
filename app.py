@@ -1329,7 +1329,8 @@ SUBMISSION_HEADERS = [
 # Columns the Apps Script adds around the client's. The app only needs these
 # when writing directly with a service account, where nothing stamps them.
 SUBMISSION_LEADING = ["Submission ID", "Submitted At"]
-SUBMISSION_TRAILING = ["Status", "Reviewed By", "Reviewed On", "Review Comment"]
+SUBMISSION_TRAILING = ["Status", "Reviewed By", "Reviewed On", "Review Comment",
+                       "Assigned To", "Assigned Email"]
 SUBMISSION_SHEET_HEADERS = SUBMISSION_LEADING + SUBMISSION_HEADERS + SUBMISSION_TRAILING
 
 # Kept for the manual-copy fallback and any older sheets.
